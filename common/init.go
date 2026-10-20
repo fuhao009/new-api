@@ -86,6 +86,7 @@ func InitEnv() {
 	}
 
 	// Initialize variables from constants.go that were using environment variables
+	RelayTraceEnabled = GetEnvOrDefaultBool("RELAY_TRACE_ENABLED", false)
 	DebugEnabled = os.Getenv("DEBUG") == "true"
 	MemoryCacheEnabled = os.Getenv("MEMORY_CACHE_ENABLED") == "true"
 	IsMasterNode = os.Getenv("NODE_TYPE") != "slave"
@@ -116,6 +117,12 @@ func InitEnv() {
 	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
+	RelayRequestGzipHosts = nil
+	for host := range strings.SplitSeq(os.Getenv("RELAY_REQUEST_GZIP_HOSTS"), ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			RelayRequestGzipHosts = append(RelayRequestGzipHosts, strings.ToLower(host))
+		}
+	}
 
 	// Initialize string variables with GetEnvOrDefaultString
 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")

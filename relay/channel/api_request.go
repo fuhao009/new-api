@@ -1,6 +1,8 @@
 package channel
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +48,69 @@ func ApplyUpstreamBodyMetadata(req *http.Request, body io.Reader) {
 	if req.GetBody == nil {
 		req.GetBody = replayable.NewReader
 	}
+}
+
+const upstreamJSONGzipMinBytes = 64 << 10
+
+var upstreamJSONGzipWriters = sync.Pool{New: func() any {
+	writer, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+	return writer
+}}
+
+// compressUpstreamJSONRequest changes only the wire representation. The opt-in
+// host list is required because many upstream APIs reject encoded request bodies.
+func compressUpstreamJSONRequest(req *http.Request) error {
+	if len(common2.RelayRequestGzipHosts) == 0 || req.URL == nil || req.Method != http.MethodPost ||
+		req.ContentLength < upstreamJSONGzipMinBytes || req.GetBody == nil || req.Header.Get("Content-Encoding") != "" {
+		return nil
+	}
+	contentType := req.Header.Get("Content-Type")
+	if contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;") {
+		return nil
+	}
+	allowed := false
+	for _, host := range common2.RelayRequestGzipHosts {
+		if strings.EqualFold(req.URL.Host, host) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return nil
+	}
+	source, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("open upstream compression source: %w", err)
+	}
+	defer source.Close()
+	var compressed bytes.Buffer
+	writer := upstreamJSONGzipWriters.Get().(*gzip.Writer)
+	writer.Reset(&compressed)
+	_, copyErr := io.Copy(writer, source)
+	closeErr := writer.Close()
+	writer.Reset(io.Discard)
+	upstreamJSONGzipWriters.Put(writer)
+	if copyErr != nil {
+		return fmt.Errorf("compress upstream JSON: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("finish upstream compression: %w", closeErr)
+	}
+	if int64(compressed.Len()) >= req.ContentLength {
+		return nil
+	}
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+	body := compressed.Bytes()
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req.ContentLength = int64(len(body))
+	req.TransferEncoding = nil
+	req.Header.Set("Content-Encoding", "gzip")
+	return nil
 }
 
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
@@ -453,6 +518,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
+	if err := compressUpstreamJSONRequest(req); err != nil {
+		return nil, err
+	}
 	// Clients are cached and shared across channels, so override redirect
 	// behavior on a shallow copy instead of mutating the cached client. This
 	// still reuses its transport and connection pools, including HTTP/2's
@@ -480,13 +548,29 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
+	trace := common2.GetRelayTrace(c)
+	if trace != nil {
+		trace.Mark("upstream_request_start")
+		req = trace.HTTPTrace(req)
+	}
 	resp, err := relayClient.Do(req)
+	if err != nil && trace != nil {
+		trace.MarkDetail("upstream_error", "error=true")
+	}
 	if err != nil {
 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
+		if trace != nil {
+			trace.MarkDetail("upstream_error", "error=true")
+		}
 		return nil, errors.New("resp is nil")
+	}
+	if trace != nil {
+		trace.Mark("upstream_headers")
+		trace.MarkDetail("upstream_protocol", resp.Proto)
+		trace.MarkDetail("upstream_error", "error=false")
 	}
 	if common2.DebugEnabled {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)

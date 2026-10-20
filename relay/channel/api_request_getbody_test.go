@@ -2,6 +2,7 @@ package channel
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -247,6 +248,64 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, rc.Close())
 		assert.Equal(t, payload, replay, "replay %d must equal the original payload", i+1)
+	}
+}
+
+func TestUpstreamJSONCompressionPreservesPayloadAndReplay(t *testing.T) {
+	previousHosts := common.RelayRequestGzipHosts
+	t.Cleanup(func() { common.RelayRequestGzipHosts = previousHosts })
+	payload := []byte(`{"input":"` + strings.Repeat("context ", 10000) + `"}`)
+	for _, test := range []struct {
+		name        string
+		hosts       []string
+		url         string
+		contentType string
+		encoding    string
+		body        []byte
+		compressed  bool
+	}{
+		{name: "disabled", url: "https://upstream.test/v1/responses", contentType: "application/json", body: payload},
+		{name: "unlisted host", hosts: []string{"other.test"}, url: "https://upstream.test/v1/responses", contentType: "application/json", body: payload},
+		{name: "different port", hosts: []string{"upstream.test"}, url: "https://upstream.test:8443/v1/responses", contentType: "application/json", body: payload},
+		{name: "small body", hosts: []string{"upstream.test"}, url: "https://upstream.test/v1/responses", contentType: "application/json", body: []byte(`{"input":"small"}`)},
+		{name: "multipart", hosts: []string{"upstream.test"}, url: "https://upstream.test/v1/images/edits", contentType: "multipart/form-data; boundary=x", body: payload},
+		{name: "existing encoding", hosts: []string{"upstream.test"}, url: "https://upstream.test/v1/responses", contentType: "application/json", encoding: "br", body: payload},
+		{name: "gzip json", hosts: []string{"upstream.test"}, url: "https://upstream.test/v1/responses", contentType: "application/json; charset=utf-8", body: payload, compressed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			common.RelayRequestGzipHosts = test.hosts
+			req, err := http.NewRequest(http.MethodPost, test.url, bytes.NewReader(test.body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", test.contentType)
+			if test.encoding != "" {
+				req.Header.Set("Content-Encoding", test.encoding)
+			}
+			require.NoError(t, compressUpstreamJSONRequest(req))
+			wire, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			require.NoError(t, req.Body.Close())
+			assert.EqualValues(t, len(wire), req.ContentLength)
+			if test.compressed {
+				assert.Equal(t, "gzip", req.Header.Get("Content-Encoding"))
+				reader, err := gzip.NewReader(bytes.NewReader(wire))
+				require.NoError(t, err)
+				decoded, err := io.ReadAll(reader)
+				require.NoError(t, err)
+				require.NoError(t, reader.Close())
+				assert.Equal(t, test.body, decoded)
+			} else {
+				assert.Equal(t, test.encoding, req.Header.Get("Content-Encoding"))
+				assert.Equal(t, test.body, wire)
+			}
+			for range 2 {
+				replay, err := req.GetBody()
+				require.NoError(t, err)
+				replayed, err := io.ReadAll(replay)
+				require.NoError(t, err)
+				require.NoError(t, replay.Close())
+				assert.Equal(t, wire, replayed)
+			}
+		})
 	}
 }
 

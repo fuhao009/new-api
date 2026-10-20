@@ -168,6 +168,10 @@ var SyncFrequency int // unit is second
 var BatchUpdateEnabled = false
 var BatchUpdateInterval int
 
+var RelayTraceEnabled bool
+
+// RelayRequestGzipHosts explicitly lists upstream authorities known to accept gzip JSON requests.
+var RelayRequestGzipHosts []string
 var RelayTimeout int // unit is second
 
 var RelayIdleConnTimeout int // unit is second

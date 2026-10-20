@@ -67,6 +67,9 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	if trace := common.GetRelayTrace(c); trace != nil {
+		trace.Mark("relay_enter")
+	}
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -119,6 +122,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if trace := common.GetRelayTrace(c); trace != nil {
+		trace.Mark("request_validated")
+	}
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
@@ -139,8 +145,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
+	if trace := common.GetRelayTrace(c); trace != nil {
+		trace.Mark("billing_start")
+	}
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
+	}
+	if trace := common.GetRelayTrace(c); trace != nil {
+		trace.Mark("billing_ready")
 	}
 	defer func() {
 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
@@ -171,6 +183,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
+		}
+		if trace := common.GetRelayTrace(c); trace != nil {
+			trace.MarkAttempt("attempt_ready", retryParam.GetRetry()+1)
 		}
 
 		bodyStorage, bodyErr := common.GetBodyStorage(c)

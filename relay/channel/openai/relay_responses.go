@@ -76,6 +76,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	accumulator := service.NewResponsesUsageAccumulator(info)
+	trace := common.GetRelayTrace(c)
+	firstEvent, firstCreated, firstReasoning, firstText := false, false, false, false
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -86,10 +88,40 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
+		isFirstText := false
+		if trace != nil {
+			if !firstEvent {
+				firstEvent = true
+				trace.MarkDetail("upstream_first_event", streamResponse.Type)
+			}
+			switch streamResponse.Type {
+			case "response.created":
+				if !firstCreated {
+					firstCreated = true
+					trace.Mark("upstream_response_created")
+				}
+			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+				if !firstReasoning && streamResponse.Delta != "" {
+					firstReasoning = true
+					trace.Mark("upstream_first_reasoning")
+				}
+			case "response.output_text.delta":
+				if !firstText && streamResponse.Delta != "" {
+					firstText, isFirstText = true, true
+					trace.Mark("upstream_first_text")
+				}
+			}
+		}
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		if isFirstText {
+			if err := helper.ResponseChunkData(c, streamResponse, data); err == nil {
+				trace.Mark("downstream_first_text_flushed")
+			}
+		} else {
+			sendResponsesStreamData(c, streamResponse, data)
+		}
 		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 	})
 

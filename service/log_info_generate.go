@@ -94,6 +94,9 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if events := RequestPolicy(ctx).Events(); len(events) > 0 {
 		other.SetAdmin("request_policy", events)
 	}
+	if trace := common.GetRelayTrace(ctx); trace != nil {
+		other.SetAdmin("relay_trace", trace.Snapshot())
+	}
 }
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,

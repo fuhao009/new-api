@@ -246,6 +246,17 @@ docker compose logs -f new-api
 
 从[发布页](https://github.com/QuantumNous/new-api/releases)选择明确的镜像版本，阅读升级说明并先备份再升级。`latest` 会随发布构建变化；已有实例应按实际版本评估迁移与兼容性。
 
+### 首响应耗时排查
+
+`other.frt` 记录分发完成至收到首个上游 SSE 数据行的耗时，不等于正文首字；角色、推理和元数据事件可能先于正文到达。
+
+设置 `RELAY_TRACE_ENABLED=true` 并重启后，`/v1` 请求会记录有界阶段计时：入口、分发、解析、计费准备、上游连接、DNS/TCP/TLS、请求发送和首个响应字节。原生 Responses 流另记首事件、`response.created`、首推理、首正文及首正文 flush 完成。默认关闭，不改变模型、推理设置、请求重试或计费。
+
+按请求 ID 搜索服务日志的 `relay_trace=`；消费日志的 `other.admin_info.relay_trace` 保留结算前快照，完整请求结束时间见服务日志。每条 trace 最多 96 个事件，`truncated=true` 表示超出上限；时间均为相对入口的毫秒值，连接事件带传输尝试编号。它不记录正文、认证头、API 密钥或原始错误；flush 成功仅表示服务端完成写出，不保证客户端已经收到。排查后关闭该开关并重启；无需启用可能输出请求正文的 `DEBUG`。
+
+当阶段计时证明大请求在发送后等待上游入口、且该上游已实测支持 `Content-Encoding: gzip` 时，可设置 `RELAY_REQUEST_GZIP_HOSTS=api.example.com`（多个上游用逗号分隔，非默认端口需包含端口）并重启。仅精确匹配的上游、可重放且至少 64KiB 的 JSON POST 会压缩；压缩结果不更小则仍发送原文。默认关闭，不改变 JSON 内容、模型参数或计费用量，也不压缩 multipart、已有编码或无法重放的请求。重试重放相同压缩字节；不支持 gzip 的上游不能启用该项。
+
+
 <a id="development"></a>
 
 ## 开发与扩展

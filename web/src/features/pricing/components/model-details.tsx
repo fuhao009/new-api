@@ -1001,7 +1001,7 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
   const { t } = useTranslation()
   const variants = props.model.billing_plugin_variants
   if (!variants?.length) {
-    return <ProviderGroupPricingSection {...props} />
+    return <ProviderGroupPricingSection {...props} groupRatio={props.model.group_ratio ?? props.groupRatio} />
   }
   return (
     <section>
@@ -1188,6 +1188,11 @@ function ProviderGroupPricingSection(
           <SectionTitle>{t('Pricing by Group')}</SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+        {props.model.channel_ratios && (
+          <p className='text-muted-foreground mb-3 text-xs'>
+            {t('Channel prices shown are the lowest available; actual charges depend on the serving channel.')}
+          </p>
+        )}
         <div className='space-y-3'>
           {availableGroups.map((group) => {
             const ratio = props.groupRatio[group] || 1
@@ -1200,7 +1205,8 @@ function ProviderGroupPricingSection(
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
                   <GroupBadge group={group} size='sm' />
                   <span className='text-muted-foreground font-mono text-xs'>
-                    {ratio}x
+                    {t('Group Ratio')}: {props.model.base_group_ratio?.[group] ?? props.groupRatio[group] ?? 1}x
+                    {' · '}{t('Channel Ratio')}: {(props.model.channel_ratios?.[group] ?? [1, 1]).join('–')}x
                   </span>
                 </div>
                 <StaticDataTable
@@ -1377,6 +1383,11 @@ function ProviderGroupPricingSection(
     <section>
       {!props.hideTitle && <SectionTitle>{t('Pricing by Group')}</SectionTitle>}
       <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+      {props.model.channel_ratios && (
+        <p className='text-muted-foreground mb-3 text-xs'>
+          {t('Channel prices shown are the lowest available; actual charges depend on the serving channel.')}
+        </p>
+      )}
       <StaticDataTable
         className='-mx-4 rounded-none border-0 sm:mx-0'
         tableClassName='text-sm'

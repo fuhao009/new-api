@@ -1,5 +1,6 @@
 {
   "translation": {
+    "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "Prix minimal des canaux disponibles ; le coût réel dépend du canal utilisé.",
     "Channel Promotion Ratio": "Ratio promotionnel du canal",
     "Channel promotion ratio must be between 0 and 1": "Le ratio promotionnel du canal doit être compris entre 0 et 1",
     "Channel Ratio": "Ratio du canal",

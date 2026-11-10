@@ -1,5 +1,6 @@
 {
   "translation": {
+    "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "利用可能なチャネルの最低価格です。実際の料金は処理チャネルによって異なります。",
     "Channel Promotion Ratio": "チャネルキャンペーン倍率",
     "Channel promotion ratio must be between 0 and 1": "チャネルキャンペーン倍率は 0 から 1 の範囲で指定してください",
     "Channel Ratio": "チャネル倍率",

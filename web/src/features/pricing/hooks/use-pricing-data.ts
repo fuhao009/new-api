@@ -59,7 +59,13 @@ export function usePricingData(enabled = true) {
         vendor_name: vendor?.name,
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
-        group_ratio: data.group_ratio,
+        base_group_ratio: data.group_ratio,
+        group_ratio: Object.fromEntries(
+          Object.entries(data.group_ratio).map(([group, ratio]) => [
+            group,
+            ratio * (model.channel_ratios?.[group]?.[0] ?? 1),
+          ])
+        ),
       }
     })
   }, [data])

@@ -1,5 +1,6 @@
 {
   "translation": {
+    "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "Показана минимальная цена доступных каналов; итог зависит от обслуживающего канала.",
     "Channel Promotion Ratio": "Коэффициент акции канала",
     "Channel promotion ratio must be between 0 and 1": "Коэффициент акции канала должен быть от 0 до 1",
     "Channel Ratio": "Коэффициент канала",

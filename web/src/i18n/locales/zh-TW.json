@@ -1,5 +1,6 @@
 {
   "translation": {
+    "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "顯示可用渠道最低價，實際費用依處理請求的渠道而定。",
     "Channel Promotion Ratio": "渠道活動倍率",
     "Channel promotion ratio must be between 0 and 1": "渠道活動倍率必須介於 0 與 1 之間",
     "Channel Ratio": "渠道倍率",

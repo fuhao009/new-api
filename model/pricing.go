@@ -25,6 +25,7 @@ type PricingPluginVariant struct {
 }
 
 type Pricing struct {
+	ChannelRatios          map[string][2]float64                `json:"channel_ratios,omitempty"`
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
 	Description            string                               `json:"description,omitempty"`
@@ -228,6 +229,21 @@ func updatePricing() {
 	}
 
 	modelGroupsMap := make(map[string]*types.Set[string])
+	channelRatios := make(map[int]float64)
+	modelChannelRatios := make(map[string]map[string][2]float64)
+	var pricingChannels []Channel
+	if err := DB.Select("id", "settings").Find(&pricingChannels).Error; err != nil {
+		common.SysError(err.Error())
+		return
+	}
+	for i := range pricingChannels {
+		settings := pricingChannels[i].GetOtherSettings()
+		ratio := 1.0
+		if configured := settings.EffectiveChannelRatio(); configured != nil {
+			ratio = *configured
+		}
+		channelRatios[pricingChannels[i].Id] = ratio
+	}
 
 	for _, ability := range enableAbilities {
 		groups, ok := modelGroupsMap[ability.Model]
@@ -236,6 +252,21 @@ func updatePricing() {
 			modelGroupsMap[ability.Model] = groups
 		}
 		groups.Add(ability.Group)
+		ratio, loaded := channelRatios[ability.ChannelId]
+		if !loaded {
+			ratio = 1
+		}
+		if modelChannelRatios[ability.Model] == nil {
+			modelChannelRatios[ability.Model] = make(map[string][2]float64)
+		}
+		ranges := modelChannelRatios[ability.Model]
+		bounds, exists := ranges[ability.Group]
+		if !exists {
+			bounds = [2]float64{ratio, ratio}
+		} else {
+			bounds = [2]float64{min(bounds[0], ratio), max(bounds[1], ratio)}
+		}
+		ranges[ability.Group] = bounds
 	}
 
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
@@ -328,6 +359,7 @@ func updatePricing() {
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
+			ChannelRatios:          modelChannelRatios[model],
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
 		}

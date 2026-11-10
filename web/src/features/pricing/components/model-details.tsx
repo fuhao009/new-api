@@ -1208,7 +1208,6 @@ function ProviderGroupPricingSection(
                   <GroupBadge group={group} size='sm' />
                   <span className='text-muted-foreground font-mono text-xs'>
                     {t('Group Ratio')}: {props.model.base_group_ratio?.[group] ?? props.groupRatio[group] ?? 1}x
-                    {' · '}{t('Channel Ratio')}: {(props.model.channel_ratios?.[group] ?? [1, 1]).join('–')}x
                   </span>
                 </div>
                 <StaticDataTable

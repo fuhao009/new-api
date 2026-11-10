@@ -648,7 +648,8 @@ function PriceSection(props: {
   const isTokenBased = isTokenBasedModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
-  const baseGroupRatioMap = { [baseGroupKey]: 1 }
+  const channelCostRatio = Math.min(...Object.values(props.model.channel_ratios ?? {}).map(([minimum]) => minimum), 1)
+  const baseGroupRatioMap = { [baseGroupKey]: channelCostRatio }
   const currency = useSystemConfigStore((state) => state.config.currency)
   const billingTime = useBillingTime(props.model.billing_expr)
   const dynamicSummary = useMemo(
@@ -659,7 +660,7 @@ function PriceSection(props: {
         showRechargePrice: props.showRechargePrice,
         priceRate: props.priceRate,
         usdExchangeRate: props.usdExchangeRate,
-        groupRatioMultiplier: 1,
+        groupRatioMultiplier: channelCostRatio,
       }),
     // Currency is read indirectly by the price formatter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -671,6 +672,7 @@ function PriceSection(props: {
       props.usdExchangeRate,
       billingTime,
       currency,
+      channelCostRatio,
     ]
   )
 
@@ -1540,6 +1542,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                   showRechargePrice,
                   priceRate: props.priceRate,
                   usdExchangeRate: props.usdExchangeRate,
+                  groupRatioMultiplier: Math.min(...Object.values(props.model.channel_ratios ?? {}).map(([minimum]) => minimum), 1),
                 }}
               />
             )}

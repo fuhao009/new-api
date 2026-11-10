@@ -222,6 +222,11 @@ export const channelFormSchema = z
       ),
     priority: z.number().optional(),
     weight: z.number().optional(),
+    channel_ratio: z
+      .number(ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
+      .min(0, ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
+      .max(1, ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
+      .optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
     status: z.number(),
@@ -442,6 +447,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   model_mapping: '',
   priority: 0,
   weight: 0,
+  channel_ratio: 1,
   test_model: '',
   auto_ban: 1,
   status: CHANNEL_STATUS.ENABLED,
@@ -564,6 +570,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let channelRatio = 1
   let advancedCustom = ''
 
   if (channel.settings) {
@@ -593,6 +600,14 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
+      const storedChannelRatio = parsed.channel_ratio
+      channelRatio =
+        typeof storedChannelRatio === 'number' &&
+        Number.isFinite(storedChannelRatio) &&
+        storedChannelRatio >= 0 &&
+        storedChannelRatio <= 1
+          ? storedChannelRatio
+          : 1
       if (parsed.advanced_custom) {
         advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
       }
@@ -613,6 +628,7 @@ export function transformChannelToFormDefaults(
     model_mapping: channel.model_mapping || '',
     priority: channel.priority || 0,
     weight: channel.weight || 0,
+    channel_ratio: channelRatio,
     test_model: channel.test_model || '',
     auto_ban: channel.auto_ban ?? 1,
     status: channel.status,
@@ -713,6 +729,21 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       // eslint-disable-next-line no-console
       console.error('Failed to parse existing settings:', error)
     }
+  }
+
+  // Channel promotion ratio applies to this channel only; store it only when
+  // discounted so untouched channels keep equivalent settings JSON.
+  const channelRatio = formData.channel_ratio
+  if (
+    typeof channelRatio === 'number' &&
+    Number.isFinite(channelRatio) &&
+    channelRatio >= 0 &&
+    channelRatio <= 1 &&
+    channelRatio !== 1
+  ) {
+    settingsObj.channel_ratio = channelRatio
+  } else {
+    delete settingsObj.channel_ratio
   }
 
   // Add vertex_key_type for Vertex AI channels (type 41)

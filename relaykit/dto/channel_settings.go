@@ -1,7 +1,9 @@
 package dto
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -138,7 +140,33 @@ type ChannelOtherSettings struct {
 	// ToolLossPolicy is a channel-level opt-in for request-phase conversion
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
-	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	ToolLossPolicy string   `json:"tool_loss_policy,omitempty"`
+	ChannelRatio   *float64 `json:"channel_ratio,omitempty"`
+}
+
+// EffectiveChannelRatio returns nil (full price) for absent or invalid values.
+func (s *ChannelOtherSettings) EffectiveChannelRatio() *float64 {
+	if s == nil || s.ChannelRatio == nil {
+		return nil
+	}
+	ratio := *s.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return nil
+	}
+	return &ratio
+}
+
+var ErrChannelRatioOutOfRange = errors.New("Channel promotion ratio must be between 0 and 1")
+
+func (s *ChannelOtherSettings) ValidateChannelRatio() error {
+	if s == nil || s.ChannelRatio == nil {
+		return nil
+	}
+	ratio := *s.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return ErrChannelRatioOutOfRange
+	}
+	return nil
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

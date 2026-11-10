@@ -50,6 +50,7 @@ const CONFIGURATION_BLOCKS = {
     section: 'routing',
     fields: ['priority', 'weight', 'test_model', 'auto_ban'],
   },
+  channelPromotion: { section: 'routing', fields: ['channel_ratio'] },
   overrideRules: {
     section: 'request',
     fields: ['status_code_mapping', 'param_override', 'header_override'],
@@ -146,6 +147,7 @@ export function getChannelConfigurationState(
       values.test_model?.trim() ||
       (values.auto_ban ?? 1) !== 1
     ),
+    channelPromotion: (values.channel_ratio ?? 1) !== 1,
     overrideRules:
       hasConfiguredJson(values.status_code_mapping) ||
       hasConfiguredJson(values.param_override) ||

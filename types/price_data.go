@@ -26,10 +26,17 @@ type PriceData struct {
 	AudioRatio           float64
 	AudioCompletionRatio float64
 	otherRatios          map[string]float64
-	UsePrice             bool
-	Quota                int // 按次计费的最终额度（MJ / Task）
-	QuotaToPreConsume    int // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo
+	// ChannelRatio is the optional per-channel promotion multiplier. Nil means
+	// absent (1); an explicit 0 makes the channel free. It is applied exactly
+	// once after model and group pricing, so it is never part of otherRatios.
+	ChannelRatio      *float64
+	UsePrice          bool
+	Quota             int // 按次计费的最终额度（MJ / Task）
+	QuotaToPreConsume int // 按量计费的预消耗额度
+	// PreConsumeBeforeRouting retains the unrounded estimate before group and
+	// channel multipliers, including when the first selected channel is free.
+	PreConsumeBeforeRouting float64
+	GroupRatioInfo          GroupRatioInfo
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
@@ -83,6 +90,36 @@ func (p *PriceData) OtherRatioMultiplier() float64 {
 
 func (p *PriceData) ApplyOtherRatiosToFloat(value float64) float64 {
 	return value * p.OtherRatioMultiplier()
+}
+
+// OptionalChannelRatio returns the stored promotion ratio, or nil when absent
+// or outside the supported 0..1 range.
+func (p *PriceData) OptionalChannelRatio() *float64 {
+	if p == nil || p.ChannelRatio == nil {
+		return nil
+	}
+	ratio := *p.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return nil
+	}
+	return p.ChannelRatio
+}
+
+// EffectiveChannelRatio returns the stored promotion ratio, or 1 when absent.
+// Stored values outside the supported 0..1 range degrade to 1 so a corrupted
+// setting cannot become a credit or an unbounded multiplier.
+func (p *PriceData) EffectiveChannelRatio() float64 {
+	ratio := p.OptionalChannelRatio()
+	if ratio == nil {
+		return 1
+	}
+	return *ratio
+}
+
+// ApplyChannelRatioToFloat applies the channel promotion multiplier once to an
+// already group-priced value. A zero ratio intentionally yields a zero charge.
+func (p *PriceData) ApplyChannelRatioToFloat(value float64) float64 {
+	return value * p.EffectiveChannelRatio()
 }
 
 func (p *PriceData) ApplyOtherRatiosToDecimal(value decimal.Decimal) decimal.Decimal {

@@ -1,5 +1,10 @@
 {
   "translation": {
+    "Channel Promotion Ratio": "Channel Promotion Ratio",
+    "Channel promotion ratio must be between 0 and 1": "Channel promotion ratio must be between 0 and 1",
+    "Channel Ratio": "Channel Ratio",
+    "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.",
+    "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

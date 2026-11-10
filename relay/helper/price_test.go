@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -746,6 +747,71 @@ func TestModelPriceHelperNativeGeminiNoThinkingDoesNotAliasBillingModel(t *testi
 	assert.NotEqual(t, 37.5, priceData.ModelRatio)
 }
 
+func TestModelPriceHelperAppliesChannelRatioToPreConsume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.GlobalConfig.ExportAllConfigs()
+	previousRatios, previousPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(previous))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrices))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"channel-ratio-token":1}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"channel-ratio-fixed":0.01}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":    `{"channel-ratio-tiered":"tiered_expr"}`,
+		"billing_setting.billing_expr":    `{"channel-ratio-tiered":"tier(\"base\", p * 2)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1}`,
+	}))
+
+	ratio := func(v float64) *float64 { return &v }
+	for _, tc := range []struct {
+		name       string
+		model      string
+		ratio      *float64
+		wantQuota  int
+		wantLocked bool
+	}{
+		{name: "token absent", model: "channel-ratio-token", wantQuota: 1000},
+		{name: "token discounted", model: "channel-ratio-token", ratio: ratio(0.8), wantQuota: 800, wantLocked: true},
+		{name: "token free", model: "channel-ratio-token", ratio: ratio(0), wantQuota: 0, wantLocked: true},
+		{name: "fixed price discounted", model: "channel-ratio-fixed", ratio: ratio(0.8), wantQuota: 4000, wantLocked: true},
+		{name: "tiered expression discounted", model: "channel-ratio-tiered", ratio: ratio(0.8), wantQuota: 800, wantLocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Set("group", "default")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tc.model,
+				UserGroup:       "default",
+				UsingGroup:      "default",
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelOtherSettings: dto.ChannelOtherSettings{ChannelRatio: tc.ratio}},
+				BillingRequestInput: &billingexpr.RequestInput{
+					Body: []byte(`{}`),
+				},
+			}
+
+			price, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantQuota, price.QuotaToPreConsume)
+			if tc.wantLocked {
+				require.NotNil(t, price.ChannelRatio)
+				assert.Equal(t, *tc.ratio, *price.ChannelRatio)
+			} else {
+				assert.Nil(t, price.ChannelRatio)
+			}
+			if snap := info.TieredBillingSnapshot; snap != nil {
+				assert.Equal(t, tc.wantQuota, snap.EstimatedQuotaAfterGroup)
+				if tc.ratio != nil {
+					require.NotNil(t, snap.ChannelRatio)
+					assert.Equal(t, *tc.ratio, *snap.ChannelRatio)
+				}
+			}
+		})
+	}
+}
+
 func TestInputPreConsumeMultiplierLegacyAndRequestPrices(t *testing.T) {
 	previous := config.GlobalConfig.ExportAllConfigs()
 	previousRatios, previousPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
@@ -793,10 +859,90 @@ func TestInputPreConsumeMultiplierLegacyAndRequestPrices(t *testing.T) {
 }
 
 // priceTestReservation observes the reservation requested before image submission.
-type priceTestReservation struct{ held int }
+type priceTestReservation struct {
+	held       int
+	reserveErr error
+}
 
 func (s *priceTestReservation) Settle(int) error         { return nil }
 func (s *priceTestReservation) Refund(*gin.Context)      {}
 func (s *priceTestReservation) NeedsRefund() bool        { return false }
 func (s *priceTestReservation) GetPreConsumedQuota() int { return s.held }
-func (s *priceTestReservation) Reserve(quota int) error  { s.held = max(s.held, quota); return nil }
+func (s *priceTestReservation) Reserve(quota int) error {
+	if s.reserveErr != nil {
+		return s.reserveErr
+	}
+	s.held = max(s.held, quota)
+	return nil
+}
+
+// A retry that moves from a free or discounted channel to an undiscounted one
+// must reserve the undiscounted estimate before the next upstream attempt; the
+// first attempt's smaller reservation must never carry over.
+func TestPrepareRequestBillingRetryRefreshesChannelRatioReservation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.GlobalConfig.ExportAllConfigs()
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(previous))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"retry-ratio-model":1}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"group_ratio_setting.group_ratio": `{"default":1}`,
+	}))
+
+	ratio := func(v float64) *float64 { return &v }
+	for _, tc := range []struct {
+		name            string
+		initialRatio    *float64
+		completingRatio *float64
+		wantInitial     int
+		wantReserved    int
+	}{
+		{name: "free channel retries onto a paid channel", initialRatio: ratio(0), wantInitial: 0, wantReserved: 1000},
+		{name: "discounted channel retries onto a paid channel", initialRatio: ratio(0.8), wantInitial: 800, wantReserved: 1000},
+		{name: "discount is kept when the retry stays on the same channel", initialRatio: ratio(0.8), completingRatio: ratio(0.8), wantInitial: 800, wantReserved: 800},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Set("group", "default")
+			common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{ChannelRatio: tc.initialRatio})
+
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "retry-ratio-model",
+				UserGroup:       "default",
+				UsingGroup:      "default",
+			}
+			price, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantInitial, price.QuotaToPreConsume)
+
+			reservation := &priceTestReservation{held: price.QuotaToPreConsume}
+			info.Billing = reservation
+
+			// The retry selected another channel; its settings replace the
+			// first attempt's in the request context.
+			common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{ChannelRatio: tc.completingRatio})
+			require.Nil(t, service.PrepareTieredBillingForSelectedGroup(ctx, info))
+			assert.Equal(t, tc.wantReserved, reservation.held)
+			assert.Equal(t, tc.wantReserved, info.PriceData.QuotaToPreConsume)
+		})
+	}
+
+	t.Run("insufficient quota blocks the retry attempt", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		ctx.Set("group", "default")
+		common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{ChannelRatio: ratio(0.8)})
+
+		info := &relaycommon.RelayInfo{OriginModelName: "retry-ratio-model", UserGroup: "default", UsingGroup: "default"}
+		price, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+		require.NoError(t, err)
+		info.Billing = &priceTestReservation{held: price.QuotaToPreConsume, reserveErr: fmt.Errorf("insufficient quota")}
+
+		common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{})
+		require.NotNil(t, service.PrepareTieredBillingForSelectedGroup(ctx, info))
+	})
+}

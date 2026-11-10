@@ -1,5 +1,10 @@
 {
   "translation": {
+    "Channel Promotion Ratio": "Коэффициент акции канала",
+    "Channel promotion ratio must be between 0 and 1": "Коэффициент акции канала должен быть от 0 до 1",
+    "Channel Ratio": "Коэффициент канала",
+    "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "Скидка действует, только когда запрос обслуживает этот канал. 1 сохраняет обычную цену, 0,8 списывает восемь десятых, а 0 делает запрос бесплатным.",
+    "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "Цены моделей, коэффициенты групп, ключи API, группы и имена моделей не меняются; коэффициент умножает итоговую стоимость один раз.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

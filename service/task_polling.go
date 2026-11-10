@@ -703,7 +703,11 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 优先让 adaptor 决定最终额度。
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("Adjusted by the channel adaptor"))
+		var clamp *common.QuotaClamp
+		if bc := task.PrivateData.BillingContext; bc != nil && bc.ChannelRatio != nil {
+			actualQuota, clamp = common.QuotaFromFloatChecked(float64(actualQuota) * *bc.ChannelRatio)
+		}
+		RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("Adjusted by the channel adaptor"), clamp)
 		return true
 	}
 	// 回退到 token 重算。

@@ -240,6 +240,20 @@ function BillingBreakdown(props: {
     })
   }
 
+  // The promotion discount applies after model and group pricing, so it stays
+  // a separate row instead of being folded into the group ratio.
+  const channelRatio = other.channel_ratio
+  if (
+    channelRatio != null &&
+    Number.isFinite(channelRatio) &&
+    channelRatio !== 1
+  ) {
+    rows.push({
+      label: t('Channel Ratio'),
+      value: `${formatRatio(channelRatio)}x`,
+    })
+  }
+
   if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {
     if (other.cache_ratio != null && other.cache_ratio !== 1) {
       rows.push({

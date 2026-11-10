@@ -551,13 +551,14 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData,
 		completionQuota := common.QuotaRound(float64(usage.CompletionTokens) * priceData.CompletionRatio)
 		quota = common.QuotaRound(float64(usage.PromptTokens) + float64(completionQuota))
 		quota = common.QuotaRound(float64(quota) * priceData.ModelRatio)
-		if priceData.ModelRatio != 0 && quota <= 0 {
+		quota = common.QuotaRound(priceData.ApplyChannelRatioToFloat(float64(quota)))
+		if priceData.ModelRatio != 0 && priceData.EffectiveChannelRatio() != 0 && quota <= 0 {
 			quota = 1
 		}
 		return quota, nil
 	}
 
-	return common.QuotaFromFloat(priceData.ModelPrice * common.QuotaPerUnit), nil
+	return common.QuotaFromFloat(priceData.ApplyChannelRatioToFloat(priceData.ModelPrice * common.QuotaPerUnit)), nil
 }
 
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) *model.LogOther {

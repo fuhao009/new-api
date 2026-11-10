@@ -533,6 +533,9 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
+		if errors.Is(err, dto.ErrChannelRatioOutOfRange) {
+			return common.NewMessage(dto.ErrChannelRatioOutOfRange.Error())
+		}
 		return common.NewMessage("Invalid channel settings format: {{error}}", map[string]any{"error": err.Error()})
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {

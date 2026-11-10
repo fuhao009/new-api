@@ -3,6 +3,7 @@ package billingexpr
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -62,12 +63,16 @@ type TraceResult struct {
 // auto-group retry and settlement. It is fully serializable and contains no
 // compiled program pointers.
 type BillingSnapshot struct {
-	EstimatedImageCount       *int           `json:"estimated_image_count,omitempty"`
-	BillingMode               string         `json:"billing_mode"`
-	ModelName                 string         `json:"model_name"`
-	ExprString                string         `json:"expr_string"`
-	ExprHash                  string         `json:"expr_hash"`
-	GroupRatio                float64        `json:"group_ratio"`
+	EstimatedImageCount *int    `json:"estimated_image_count,omitempty"`
+	BillingMode         string  `json:"billing_mode"`
+	ModelName           string  `json:"model_name"`
+	ExprString          string  `json:"expr_string"`
+	ExprHash            string  `json:"expr_hash"`
+	GroupRatio          float64 `json:"group_ratio"`
+	// ChannelRatio is the optional channel promotion multiplier frozen with
+	// this snapshot. Nil means absent (1); an explicit 0 makes the channel
+	// free. It is applied once after the group ratio, never folded into it.
+	ChannelRatio              *float64       `json:"channel_ratio,omitempty"`
 	EstimatedPromptTokens     int            `json:"estimated_prompt_tokens"`
 	EstimatedCompletionTokens int            `json:"estimated_completion_tokens"`
 	PreConsumeMultiplier      float64        `json:"pre_consume_multiplier,omitempty"` // Reservation only; zero in older snapshots means 1.
@@ -80,6 +85,19 @@ type BillingSnapshot struct {
 	ExprVersion               int            `json:"expr_version"`
 	TaskUsageBilling          bool           `json:"task_usage_billing,omitempty"`
 	UsageFacts                map[string]any `json:"usage_facts,omitempty"`
+}
+
+// EffectiveChannelRatio returns the snapshot's frozen promotion multiplier.
+// Nil snapshots, absent values, and invalid stored values mean 1.
+func (s *BillingSnapshot) EffectiveChannelRatio() float64 {
+	if s == nil || s.ChannelRatio == nil {
+		return 1
+	}
+	ratio := *s.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return 1
+	}
+	return ratio
 }
 
 // TieredResult holds everything needed after running tiered settlement.

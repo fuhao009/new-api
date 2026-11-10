@@ -169,6 +169,10 @@ type TaskBillingContext struct {
 	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
 	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+	// ChannelRatio freezes the submitting channel's optional promotion
+	// multiplier so polling settles at the price the task was submitted under.
+	// Nil means absent (1); 0 is a free channel.
+	ChannelRatio *float64 `json:"channel_ratio,omitempty"`
 }
 
 // ResultRetrievable reports whether retrieval surfaces (native query routes,

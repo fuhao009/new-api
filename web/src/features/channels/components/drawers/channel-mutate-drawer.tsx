@@ -22,6 +22,7 @@ import {
   ArrowRight,
   ArrowLeft,
   ArrowRightLeft,
+  BadgePercent,
   PanelLeftOpen,
   AlertCircle,
   ChevronDown,
@@ -105,6 +106,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -2284,6 +2286,53 @@ export function ChannelMutateDrawer({
                 onCheckedChange={(checked) => field.onChange(checked ? 1 : 0)}
               />
             </FormControl>
+          </FormItem>
+        )}
+      />
+    </div>
+  )
+
+  const channelPromotionFields = (
+    <div
+      role='group'
+      aria-label={t('Channel Promotion Ratio')}
+      className={channelConfigurationBlockClassName(
+        configuration.blocks.channelPromotion,
+        'flex flex-col gap-4'
+      )}
+    >
+      <SubHeading
+        title={t('Channel Promotion Ratio')}
+        status={configuration.blocks.channelPromotion}
+        icon={<BadgePercent className='h-3.5 w-3.5' />}
+        iconTone='warning'
+      />
+      <FormField
+        control={form.control}
+        name='channel_ratio'
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{t('Channel Promotion Ratio')}</FormLabel>
+            <FormControl>
+              <Input
+                type='number'
+                min={0}
+                max={1}
+                step='0.05'
+                placeholder='1'
+                disabled={sensitiveLocked}
+                {...safeNumberFieldProps(field)}
+              />
+            </FormControl>
+            <FormDescription>
+              {t(
+                'Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.'
+              )}{' '}
+              {t(
+                'Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.'
+              )}
+            </FormDescription>
+            <FormMessage />
           </FormItem>
         )}
       />
@@ -4729,6 +4778,7 @@ export function ChannelMutateDrawer({
           <>
             {redirectPanelActive ? redirectPanelNotice : modelMappingFields}
             {routingFields}
+            {channelPromotionFields}
           </>
         }
         request={

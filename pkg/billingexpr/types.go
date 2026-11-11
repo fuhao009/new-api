@@ -94,7 +94,7 @@ func (s *BillingSnapshot) EffectiveChannelRatio() float64 {
 		return 1
 	}
 	ratio := *s.ChannelRatio
-	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 		return 1
 	}
 	return ratio

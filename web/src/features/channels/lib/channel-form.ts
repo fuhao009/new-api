@@ -225,7 +225,6 @@ export const channelFormSchema = z
     channel_ratio: z
       .number(ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
       .min(0, ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
-      .max(1, ERROR_MESSAGES.INVALID_CHANNEL_RATIO)
       .optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
@@ -604,8 +603,7 @@ export function transformChannelToFormDefaults(
       channelRatio =
         typeof storedChannelRatio === 'number' &&
         Number.isFinite(storedChannelRatio) &&
-        storedChannelRatio >= 0 &&
-        storedChannelRatio <= 1
+        storedChannelRatio >= 0
           ? storedChannelRatio
           : 1
       if (parsed.advanced_custom) {
@@ -732,13 +730,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   // Channel promotion ratio applies to this channel only; store it only when
-  // discounted so untouched channels keep equivalent settings JSON.
+  // different from 1 so untouched channels keep equivalent settings JSON.
   const channelRatio = formData.channel_ratio
   if (
     typeof channelRatio === 'number' &&
     Number.isFinite(channelRatio) &&
     channelRatio >= 0 &&
-    channelRatio <= 1 &&
     channelRatio !== 1
   ) {
     settingsObj.channel_ratio = channelRatio

@@ -98,6 +98,40 @@ const model: PricingModel = {
     },
   },
 }
+
+it('updates base and group prices when the channel multiplier changes above one or to zero', () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const content = (ratio: number) => (
+    <QueryClientProvider client={client}>
+      <ModelDetailsContent
+        model={{
+          ...model,
+          channel_ratios: { default: [ratio, ratio] },
+          group_ratio: { default: ratio },
+          base_group_ratio: { default: 1 },
+        }}
+        groupRatio={{ default: 1 }}
+        usableGroup={{ default: { desc: '', ratio: 1 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={1}
+        tokenUnit='M'
+      />
+    </QueryClientProvider>
+  )
+  const view = render(content(2))
+  expect(screen.getAllByText(/\$0\.44/).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/\$0\.22/)).not.toBeInTheDocument()
+  view.rerender(content(0))
+  expect(screen.queryByText(/\$0\.44/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/\$0\.22/)).not.toBeInTheDocument()
+  expect(screen.getAllByText(/^\$0(?:\.0+)?$/).length).toBeGreaterThan(0)
+})
 const clients: QueryClient[] = []
 
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {

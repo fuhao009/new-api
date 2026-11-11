@@ -93,21 +93,21 @@ func (p *PriceData) ApplyOtherRatiosToFloat(value float64) float64 {
 }
 
 // OptionalChannelRatio returns the stored promotion ratio, or nil when absent
-// or outside the supported 0..1 range.
+// or not a finite non-negative number.
 func (p *PriceData) OptionalChannelRatio() *float64 {
 	if p == nil || p.ChannelRatio == nil {
 		return nil
 	}
 	ratio := *p.ChannelRatio
-	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 		return nil
 	}
 	return p.ChannelRatio
 }
 
 // EffectiveChannelRatio returns the stored promotion ratio, or 1 when absent.
-// Stored values outside the supported 0..1 range degrade to 1 so a corrupted
-// setting cannot become a credit or an unbounded multiplier.
+// Negative and non-finite stored values degrade to 1 so a corrupted setting
+// cannot become a credit. Quota conversion separately guards overflow.
 func (p *PriceData) EffectiveChannelRatio() float64 {
 	ratio := p.OptionalChannelRatio()
 	if ratio == nil {

@@ -2,7 +2,7 @@
   "translation": {
     "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "Hiển thị giá thấp nhất của kênh khả dụng; phí thực tế phụ thuộc kênh xử lý.",
     "Channel Promotion Ratio": "Hệ số khuyến mãi kênh",
-    "Channel promotion ratio must be between 0 and 1": "Hệ số khuyến mãi kênh phải nằm trong khoảng 0 đến 1",
+    "Channel promotion ratio must be a finite non-negative number": "Hệ số khuyến mãi kênh phải là số hữu hạn không âm",
     "Channel Ratio": "Hệ số kênh",
     "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "Chỉ áp dụng khi kênh này thực sự xử lý yêu cầu. 1 giữ nguyên giá, 0,8 tính tám phần mười và 0 miễn phí.",
     "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "Giá mô hình, hệ số nhóm, khóa API, nhóm và tên mô hình không thay đổi; hệ số này nhân vào chi phí cuối cùng đúng một lần.",

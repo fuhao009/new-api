@@ -2,7 +2,7 @@
   "translation": {
     "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "Channel prices shown are the lowest available; actual charges depend on the serving channel.",
     "Channel Promotion Ratio": "Channel Promotion Ratio",
-    "Channel promotion ratio must be between 0 and 1": "Channel promotion ratio must be between 0 and 1",
+    "Channel promotion ratio must be a finite non-negative number": "Channel promotion ratio must be a finite non-negative number",
     "Channel Ratio": "Channel Ratio",
     "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.",
     "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.",

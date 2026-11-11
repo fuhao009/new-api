@@ -2,7 +2,7 @@
   "translation": {
     "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "展示的是可用渠道最低价，实际费用取决于处理请求的渠道。",
     "Channel Promotion Ratio": "渠道活动倍率",
-    "Channel promotion ratio must be between 0 and 1": "渠道活动倍率必须在 0 到 1 之间",
+    "Channel promotion ratio must be a finite non-negative number": "渠道活动倍率必须为有限的非负数，可以大于 1",
     "Channel Ratio": "渠道倍率",
     "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "仅在实际由该渠道处理请求时生效。1 保持原价，0.8 按八折计费，0 表示免费。",
     "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "模型价格、分组倍率、密钥、分组和模型名称均不受影响；该倍率只在最终费用上乘一次。",

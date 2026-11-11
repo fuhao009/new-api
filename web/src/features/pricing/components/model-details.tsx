@@ -648,7 +648,10 @@ function PriceSection(props: {
   const isTokenBased = isTokenBasedModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
-  const channelCostRatio = Math.min(...Object.values(props.model.channel_ratios ?? {}).map(([minimum]) => minimum), 1)
+  const channelRatios = Object.values(props.model.channel_ratios ?? {})
+  const channelCostRatio = channelRatios.length
+    ? Math.min(...channelRatios.map(([minimum]) => minimum))
+    : 1
   const baseGroupRatioMap = { [baseGroupKey]: channelCostRatio }
   const currency = useSystemConfigStore((state) => state.config.currency)
   const billingTime = useBillingTime(props.model.billing_expr)
@@ -1003,7 +1006,12 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
   const { t } = useTranslation()
   const variants = props.model.billing_plugin_variants
   if (!variants?.length) {
-    return <ProviderGroupPricingSection {...props} groupRatio={props.model.group_ratio ?? props.groupRatio} />
+    return (
+      <ProviderGroupPricingSection
+        {...props}
+        groupRatio={props.model.group_ratio ?? props.groupRatio}
+      />
+    )
   }
   return (
     <section>
@@ -1039,6 +1047,7 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
               <ProviderGroupPricingSection
                 {...props}
                 model={withPluginPricing(props.model, variant)}
+                groupRatio={props.model.group_ratio ?? props.groupRatio}
                 hideTitle
               />
             ) : (
@@ -1169,7 +1178,7 @@ function ProviderGroupPricingSection(
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
-        const ratio = props.groupRatio[group] || 1
+        const ratio = props.groupRatio[group] ?? 1
         return [
           group,
           getDynamicFormattedPricesByTier(dynamicTiers, {
@@ -1192,12 +1201,14 @@ function ProviderGroupPricingSection(
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         {props.model.channel_ratios && (
           <p className='text-muted-foreground mb-3 text-xs'>
-            {t('Channel prices shown are the lowest available; actual charges depend on the serving channel.')}
+            {t(
+              'Channel prices shown are the lowest available; actual charges depend on the serving channel.'
+            )}
           </p>
         )}
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = props.groupRatio[group] ?? 1
             const formattedPricesByTier =
               formattedPricesByGroup.get(group) ??
               new Map<DynamicPricingTier, Map<string, string>>()
@@ -1207,7 +1218,11 @@ function ProviderGroupPricingSection(
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
                   <GroupBadge group={group} size='sm' />
                   <span className='text-muted-foreground font-mono text-xs'>
-                    {t('Group Ratio')}: {props.model.base_group_ratio?.[group] ?? props.groupRatio[group] ?? 1}x
+                    {t('Group Ratio')}:{' '}
+                    {props.model.base_group_ratio?.[group] ??
+                      props.groupRatio[group] ??
+                      1}
+                    x
                   </span>
                 </div>
                 <StaticDataTable
@@ -1386,7 +1401,9 @@ function ProviderGroupPricingSection(
       <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
       {props.model.channel_ratios && (
         <p className='text-muted-foreground mb-3 text-xs'>
-          {t('Channel prices shown are the lowest available; actual charges depend on the serving channel.')}
+          {t(
+            'Channel prices shown are the lowest available; actual charges depend on the serving channel.'
+          )}
         </p>
       )}
       <StaticDataTable
@@ -1408,7 +1425,8 @@ function ProviderGroupPricingSection(
             header: t('Ratio'),
             className: thClass,
             cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
+            cell: (group) =>
+              `${props.model.base_group_ratio?.[group] ?? props.groupRatio[group] ?? 1}x`,
           },
           ...(isTokenBased
             ? [
@@ -1541,7 +1559,15 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                   showRechargePrice,
                   priceRate: props.priceRate,
                   usdExchangeRate: props.usdExchangeRate,
-                  groupRatioMultiplier: Math.min(...Object.values(props.model.channel_ratios ?? {}).map(([minimum]) => minimum), 1),
+                  groupRatioMultiplier: Object.keys(
+                    props.model.channel_ratios ?? {}
+                  ).length
+                    ? Math.min(
+                        ...Object.values(props.model.channel_ratios ?? {}).map(
+                          ([minimum]) => minimum
+                        )
+                      )
+                    : 1,
                 }}
               />
             )}

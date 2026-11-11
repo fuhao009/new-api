@@ -747,18 +747,17 @@ func TestChannelOtherSettingsChannelRatio(t *testing.T) {
 	require.Nil(t, (*ChannelOtherSettings)(nil).EffectiveChannelRatio())
 	require.Nil(t, (&ChannelOtherSettings{}).EffectiveChannelRatio())
 
-	for _, ratio := range []float64{half, zero, one} {
+	for _, ratio := range []float64{half, zero, one, above, 20} {
 		settings := &ChannelOtherSettings{ChannelRatio: &ratio}
 		require.NoError(t, settings.ValidateChannelRatio())
 		require.NotNil(t, settings.EffectiveChannelRatio())
 		require.Equal(t, ratio, *settings.EffectiveChannelRatio())
 	}
 
-	for _, ratio := range []float64{above, negative, nan, inf} {
+	for _, ratio := range []float64{negative, nan, inf} {
 		settings := &ChannelOtherSettings{ChannelRatio: &ratio}
 		err := settings.ValidateChannelRatio()
 		require.ErrorIs(t, err, ErrChannelRatioOutOfRange)
-		assert.Equal(t, "Channel promotion ratio must be between 0 and 1", err.Error())
 		// Out-of-range stored values never become billing multipliers.
 		assert.Nil(t, settings.EffectiveChannelRatio())
 	}

@@ -2,7 +2,7 @@
   "translation": {
     "Channel prices shown are the lowest available; actual charges depend on the serving channel.": "利用可能なチャネルの最低価格です。実際の料金は処理チャネルによって異なります。",
     "Channel Promotion Ratio": "チャネルキャンペーン倍率",
-    "Channel promotion ratio must be between 0 and 1": "チャネルキャンペーン倍率は 0 から 1 の範囲で指定してください",
+    "Channel promotion ratio must be a finite non-negative number": "チャネルキャンペーン倍率は有限の0以上の数値で指定してください",
     "Channel Ratio": "チャネル倍率",
     "Discount applied only when this channel serves the request. 1 keeps the original price, 0.8 charges eight-tenths, and 0 makes it free.": "実際にこのチャネルでリクエストを処理した場合のみ適用されます。1 は通常価格、0.8 は 2 割引、0 は無料です。",
     "Model prices, group ratios, API keys, groups, and model names are unaffected; the ratio multiplies the final charge once.": "モデル価格、グループ倍率、API キー、グループ、モデル名は変更されません。この倍率は最終料金に一度だけ掛かります。",

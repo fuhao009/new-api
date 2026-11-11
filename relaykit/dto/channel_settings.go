@@ -150,20 +150,20 @@ func (s *ChannelOtherSettings) EffectiveChannelRatio() *float64 {
 		return nil
 	}
 	ratio := *s.ChannelRatio
-	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 		return nil
 	}
 	return &ratio
 }
 
-var ErrChannelRatioOutOfRange = errors.New("Channel promotion ratio must be between 0 and 1")
+var ErrChannelRatioOutOfRange = errors.New("Channel promotion ratio must be a finite non-negative number")
 
 func (s *ChannelOtherSettings) ValidateChannelRatio() error {
 	if s == nil || s.ChannelRatio == nil {
 		return nil
 	}
 	ratio := *s.ChannelRatio
-	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 		return ErrChannelRatioOutOfRange
 	}
 	return nil

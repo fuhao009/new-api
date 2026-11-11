@@ -1507,6 +1507,7 @@ export function ChannelMutateDrawer({
   // Handle successful submission
   const handleSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    queryClient.invalidateQueries({ queryKey: ['pricing'] })
     if (channelId) {
       queryClient.invalidateQueries({
         queryKey: channelsQueryKeys.detail(channelId),
@@ -2317,7 +2318,6 @@ export function ChannelMutateDrawer({
               <Input
                 type='number'
                 min={0}
-                max={1}
                 step='0.05'
                 placeholder='1'
                 disabled={sensitiveLocked}

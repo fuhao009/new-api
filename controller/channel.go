@@ -533,6 +533,10 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
+		if errors.Is(err, dto.ErrChannelRatioOutOfRange) {
+			// Keep the ratio message unwrapped so the web console can translate it.
+			return common.NewMessage(dto.ErrChannelRatioOutOfRange.Error())
+		}
 		return common.NewMessage("Invalid channel settings format: {{error}}", map[string]any{"error": err.Error()})
 	}
 	if channel.Type == constant.ChannelTypeTaskPlugin {
@@ -560,6 +564,14 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	setting := channel.GetSetting()
+	if setting.ClaudeCLI {
+		if channel.Type != constant.ChannelTypeAnthropic {
+			return common.NewMessage("Claude CLI is only supported on Anthropic channels")
+		}
+		if setting.PassThroughBodyEnabled {
+			return common.NewMessage("Claude CLI cannot be combined with Pass Through Body")
+		}
+	}
 	if channel.Type != constant.ChannelTypeNewAPI && len(setting.TaskExtendPluginKeys) > 0 {
 		return fmt.Errorf("task_extend_plugin_keys is only supported on New API channels")
 	}
@@ -1353,6 +1365,7 @@ type fetchModelsRequest struct {
 	AdvancedCustom *string `json:"advanced_custom"`
 	HeaderOverride *string `json:"header_override"`
 	Proxy          *string `json:"proxy"`
+	Setting        *string `json:"setting"`
 }
 
 func buildAdvancedCustomModelPreviewChannel(req fetchModelsRequest) (*model.Channel, error) {
@@ -1435,7 +1448,44 @@ func FetchModels(c *gin.Context) {
 	}
 
 	var channel *model.Channel
-	if req.Type == constant.ChannelTypeAdvancedCustom || req.ChannelID > 0 {
+	if req.Type == constant.ChannelTypeAnthropic {
+		if req.ChannelID > 0 {
+			saved, err := model.GetChannelById(req.ChannelID, true)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if saved.Type != constant.ChannelTypeAnthropic {
+				common.ApiErrorT(c, "Claude CLI is only supported on Anthropic channels")
+				return
+			}
+			channel = saved
+		} else {
+			channel = &model.Channel{Type: req.Type}
+		}
+		if req.Key != "" {
+			channel.Key, _, _ = strings.Cut(strings.TrimSpace(req.Key), "\n")
+		}
+		if req.BaseURL != nil {
+			baseURL := strings.TrimSpace(*req.BaseURL)
+			channel.BaseURL = &baseURL
+		}
+		if req.Setting != nil {
+			channel.Setting = req.Setting
+		}
+		if req.HeaderOverride != nil {
+			channel.HeaderOverride = req.HeaderOverride
+		}
+		if req.Proxy != nil {
+			setting := channel.GetSetting()
+			setting.Proxy = strings.TrimSpace(*req.Proxy)
+			channel.SetSetting(setting)
+		}
+		if err := validateChannel(channel, false); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	} else if req.Type == constant.ChannelTypeAdvancedCustom || req.ChannelID > 0 {
 		var err error
 		channel, err = buildAdvancedCustomModelPreviewChannel(req)
 		if err != nil {

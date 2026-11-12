@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 
@@ -648,6 +649,10 @@ func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
 // their stored values. Only administrators change the channel and upstream
 // switches, and a threshold of 0 means the site default.
 func TestUpdateUserSettingKeepsWhatTheRequestLeavesOut(t *testing.T) {
+	fetch := system_setting.GetFetchSetting()
+	previousFetch := *fetch
+	t.Cleanup(func() { *fetch = previousFetch })
+	fetch.EnableSSRFProtection = false
 	on, off := true, false
 	stored := dto.UserSetting{
 		NotifyType:                       dto.NotifyTypeBark,
@@ -672,6 +677,26 @@ func TestUpdateUserSettingKeepsWhatTheRequestLeavesOut(t *testing.T) {
 		wantSuccess bool
 		want        dto.UserSetting
 	}{
+		{
+			name:        "DingTalk settings persist with signing secret",
+			role:        common.RoleCommonUser,
+			body:        `{"notify_type":"dingtalk","webhook_url":"https://oapi.dingtalk.com/robot/send?access_token=robot-token","webhook_secret":"signing-secret"}`,
+			wantSuccess: true,
+			want:        kept(dto.UserSetting{NotifyType: dto.NotifyTypeDingTalk, WebhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=robot-token", WebhookSecret: "signing-secret", QuotaWarningEnabled: &off, ChannelNotifyEnabled: &on, UpstreamModelUpdateNotifyEnabled: true}),
+		},
+		{
+			name:        "WeCom settings persist with robot key",
+			role:        common.RoleCommonUser,
+			body:        `{"notify_type":"wecom","webhook_url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key"}`,
+			wantSuccess: true,
+			want:        kept(dto.UserSetting{NotifyType: dto.NotifyTypeWeCom, WebhookUrl: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key", QuotaWarningEnabled: &off, ChannelNotifyEnabled: &on, UpstreamModelUpdateNotifyEnabled: true}),
+		},
+		{
+			name: "robot rejects private webhook without changing settings",
+			role: common.RoleCommonUser,
+			body: `{"notify_type":"wecom","webhook_url":"https://127.0.0.1/cgi-bin/webhook/send?key=robot-key"}`,
+			want: stored,
+		},
 		{
 			name:        "older client without the new switches",
 			role:        common.RoleAdminUser,

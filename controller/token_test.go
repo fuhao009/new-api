@@ -1015,3 +1015,25 @@ func verifyAPITokenAudit(t *testing.T) {
 		assert.EqualValues(t, 1, count)
 	})
 }
+
+func TestTokenBatchUpdateRejectsMixedOwnershipAtomically(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	owned := seedToken(t, db, 7, "owned", "bulk-owned")
+	foreign := seedToken(t, db, 8, "foreign", "bulk-foreign")
+	company := seedToken(t, db, 7, "enterprise", "bulk-enterprise")
+	require.NoError(t, db.Model(company).Update("enterprise_id", 9).Error)
+	for _, other := range []int{foreign.Id, company.Id} {
+		require.Error(t, model.BatchUpdatePersonalTokens(7, []int{owned.Id, other}, map[string]any{"category": "work"}))
+		require.NoError(t, db.First(owned, owned.Id).Error)
+		assert.Empty(t, owned.Category)
+	}
+	require.NoError(t, model.BatchUpdatePersonalTokens(7, []int{owned.Id}, map[string]any{"category": "work", "remain_quota": 0, "unlimited_quota": false}))
+	rows, total, err := model.FilterPersonalTokens(7, 0, 20, "", "work")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, owned.Id, rows[0].Id)
+	assert.Zero(t, rows[0].RemainQuota)
+	assert.False(t, rows[0].UnlimitedQuota)
+	assert.NotEqual(t, owned.Key, rows[0].Key)
+}

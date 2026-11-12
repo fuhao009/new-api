@@ -110,6 +110,9 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other.SetPublic("cache_ratio", cacheRatio)
 	other.SetPublic("model_price", modelPrice)
 	other.SetPublic("user_group_ratio", userGroupRatio)
+	if channelRatio := relayInfo.LogChannelRatio(); channelRatio != nil {
+		other.SetPublic("channel_ratio", *channelRatio)
+	}
 	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
 	if relayInfo.ReasoningEffort != "" {
 		other.SetPublic("reasoning_effort", relayInfo.ReasoningEffort)
@@ -326,6 +329,11 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.P
 	other.SetPublic("group_ratio", priceData.GroupRatioInfo.GroupRatio)
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other.SetPublic("user_group_ratio", priceData.GroupRatioInfo.GroupSpecialRatio)
+	}
+	if relayInfo != nil {
+		if channelRatio := relayInfo.LogChannelRatio(); channelRatio != nil {
+			other.SetPublic("channel_ratio", *channelRatio)
+		}
 	}
 	appendRequestPath(nil, relayInfo, other)
 	return other

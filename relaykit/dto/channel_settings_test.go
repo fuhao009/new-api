@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"math"
 	"regexp"
 	"testing"
 
@@ -735,4 +736,43 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	err := (&ChannelOtherSettings{ToolLossPolicy: "drop"}).ValidateToolLossPolicy()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
+}
+
+func TestChannelOtherSettingsChannelRatio(t *testing.T) {
+	half, zero, one, above, negative := 0.8, 0.0, 1.0, 1.2, -0.1
+	nan, inf := math.NaN(), math.Inf(1)
+
+	// Absent means 1 and is valid.
+	require.NoError(t, (*ChannelOtherSettings)(nil).ValidateChannelRatio())
+	require.Nil(t, (*ChannelOtherSettings)(nil).EffectiveChannelRatio())
+	require.Nil(t, (&ChannelOtherSettings{}).EffectiveChannelRatio())
+
+	for _, ratio := range []float64{half, zero, one} {
+		settings := &ChannelOtherSettings{ChannelRatio: &ratio}
+		require.NoError(t, settings.ValidateChannelRatio())
+		require.NotNil(t, settings.EffectiveChannelRatio())
+		require.Equal(t, ratio, *settings.EffectiveChannelRatio())
+	}
+
+	for _, ratio := range []float64{above, negative, nan, inf} {
+		settings := &ChannelOtherSettings{ChannelRatio: &ratio}
+		err := settings.ValidateChannelRatio()
+		require.ErrorIs(t, err, ErrChannelRatioOutOfRange)
+		assert.Equal(t, "Channel promotion ratio must be between 0 and 1", err.Error())
+		// Out-of-range stored values never become billing multipliers.
+		assert.Nil(t, settings.EffectiveChannelRatio())
+	}
+
+	// JSON round trip keeps absent distinct from explicit zero.
+	encoded, err := json.Marshal(ChannelOtherSettings{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "channel_ratio")
+
+	encoded, err = json.Marshal(ChannelOtherSettings{ChannelRatio: &zero})
+	require.NoError(t, err)
+	var decoded ChannelOtherSettings
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.NotNil(t, decoded.ChannelRatio)
+	assert.Zero(t, *decoded.ChannelRatio)
+	require.NoError(t, decoded.ValidateChannelRatio())
 }

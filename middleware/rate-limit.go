@@ -194,6 +194,11 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// PasswordLoginRateLimit remains active even when optional critical limits are disabled.
+func PasswordLoginRateLimit() gin.HandlerFunc {
+	return rateLimitFactory(20, 60, "password-login")
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext

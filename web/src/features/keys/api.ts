@@ -125,3 +125,13 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   const res = await api.post('/api/token/batch/keys', { ids })
   return res.data
 }
+
+export async function filterApiKeys(params: {
+  category: string
+  keyword: string
+  p: number
+  size: number
+}): Promise<GetApiKeysResponse> {
+  const response = await api.get('/api/token/filter', { params })
+  return response.data
+}

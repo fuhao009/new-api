@@ -29,8 +29,18 @@ import { channelFormSchema, type ChannelFormValues } from './channel-form'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 export type ChannelProviderTarget =
-  | { kind: 'builtin'; type: number }
+  | { kind: 'builtin'; type: number; claudeCli?: boolean }
   | { kind: 'plugin'; key: string }
+
+// Identifies the picker entry behind a target. The Claude CLI template reuses
+// the Anthropic channel type, so the request profile belongs in its id to keep
+// both entries selectable and to mark the right one as current.
+export function getChannelProviderId(target: ChannelProviderTarget): string {
+  if (target.kind === 'plugin') return `plugin:${target.key}`
+  return target.claudeCli
+    ? `builtin:${target.type}:claude-cli`
+    : `builtin:${target.type}`
+}
 
 export type ChannelConfigurationSection =
   | 'connection'
@@ -50,6 +60,7 @@ const CONFIGURATION_BLOCKS = {
     section: 'routing',
     fields: ['priority', 'weight', 'test_model', 'auto_ban'],
   },
+  channelPromotion: { section: 'routing', fields: ['channel_ratio'] },
   overrideRules: {
     section: 'request',
     fields: ['status_code_mapping', 'param_override', 'header_override'],
@@ -60,6 +71,7 @@ const CONFIGURATION_BLOCKS = {
       'force_format',
       'thinking_to_content',
       'pass_through_body_enabled',
+      'claude_cli',
       'responses_websocket_enabled',
       'ollama_openai_chat',
       'system_prompt',
@@ -146,6 +158,7 @@ export function getChannelConfigurationState(
       values.test_model?.trim() ||
       (values.auto_ban ?? 1) !== 1
     ),
+    channelPromotion: (values.channel_ratio ?? 1) !== 1,
     overrideRules:
       hasConfiguredJson(values.status_code_mapping) ||
       hasConfiguredJson(values.param_override) ||
@@ -153,6 +166,7 @@ export function getChannelConfigurationState(
     requestProcessing: Boolean(
       (values.type === 1 && values.force_format) ||
       values.thinking_to_content ||
+      values.claude_cli ||
       (values.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
         values.pass_through_body_enabled) ||
       (supportsResponsesWebSocket(values.type) &&

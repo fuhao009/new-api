@@ -143,6 +143,70 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 				require.NoError(t, db.Raw("select version()").Scan(&version).Error)
 			}
 			t.Logf("%s version: %s", dialect, version)
+			t.Run("claude_cli", func(t *testing.T) {
+				channel := &Channel{Type: constant.ChannelTypeAnthropic, Key: "fixture", Name: "CLI", Status: common.ChannelStatusManuallyDisabled}
+				channel.SetSetting(dto.ChannelSettings{ClaudeCLI: true, Proxy: "http://proxy.example:8080"})
+				require.NoError(t, table.Create(channel).Error)
+				var loaded Channel
+				require.NoError(t, table.First(&loaded, channel.Id).Error)
+				assert.True(t, loaded.GetSetting().ClaudeCLI)
+				assert.Equal(t, "http://proxy.example:8080", loaded.GetSetting().Proxy)
+				assert.Equal(t, common.ChannelStatusManuallyDisabled, loaded.Status)
+				setting := loaded.GetSetting()
+				setting.ClaudeCLI = false
+				loaded.SetSetting(setting)
+				require.NoError(t, table.Save(&loaded).Error)
+				require.NoError(t, table.First(&loaded, channel.Id).Error)
+				assert.False(t, loaded.GetSetting().ClaudeCLI)
+				assert.Equal(t, "http://proxy.example:8080", loaded.GetSetting().Proxy)
+			})
+			t.Run("channel_ratio", func(t *testing.T) {
+				// Absent means 1 and must stay absent across a save/read cycle.
+				channel := &Channel{Type: constant.ChannelTypeOpenAI, Key: "fixture", Name: "promotion", Status: common.ChannelStatusEnabled, Group: "default", Models: "gpt-4o"}
+				require.NoError(t, channel.ValidateSettings())
+				require.NoError(t, table.Create(channel).Error)
+
+				var loaded Channel
+				require.NoError(t, table.First(&loaded, channel.Id).Error)
+				assert.Nil(t, loaded.GetOtherSettings().ChannelRatio, "absent ratio must not materialise as a value")
+				assert.NotContains(t, loaded.OtherSettings, "channel_ratio")
+
+				for _, tc := range []struct {
+					name  string
+					ratio *float64
+				}{
+					{name: "discounted", ratio: common.GetPointer(0.8)},
+					{name: "free", ratio: common.GetPointer(0.0)},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						settings := loaded.GetOtherSettings()
+						settings.ChannelRatio = tc.ratio
+						loaded.SetOtherSettings(settings)
+						require.NoError(t, loaded.ValidateSettings())
+						require.NoError(t, table.Save(&loaded).Error)
+
+						var reread Channel
+						require.NoError(t, table.First(&reread, channel.Id).Error)
+						actual := reread.GetOtherSettings()
+						require.NotNil(t, actual.ChannelRatio)
+						assert.Equal(t, *tc.ratio, *actual.ChannelRatio)
+						// Identity and routing fields stay untouched by a ratio edit.
+						assert.Equal(t, "fixture", reread.Key)
+						assert.Equal(t, "default", reread.Group)
+						assert.Equal(t, "gpt-4o", reread.Models)
+					})
+				}
+
+				// Clearing the setting returns the channel to full price.
+				settings := loaded.GetOtherSettings()
+				settings.ChannelRatio = nil
+				loaded.SetOtherSettings(settings)
+				require.NoError(t, table.Save(&loaded).Error)
+				var cleared Channel
+				require.NoError(t, table.First(&cleared, channel.Id).Error)
+				assert.Nil(t, cleared.GetOtherSettings().ChannelRatio)
+				assert.NotContains(t, cleared.OtherSettings, "channel_ratio")
+			})
 			for _, channelType := range []int{constant.ChannelTypeVLLM, constant.ChannelTypeSGLang} {
 				t.Run(fmt.Sprint(channelType), func(t *testing.T) {
 					channel := &Channel{Type: channelType, Key: "EMPTY", Name: "inference", Status: common.ChannelStatusEnabled}

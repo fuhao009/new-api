@@ -112,6 +112,7 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		realtime, reserveInsufficient             bool
 		wallet, outboundImages                    int
 		groupRatio                                float64
+		channelRatio                              *float64
 		want                                      int
 		unit                                      billingexpr.BillingUnit
 		requestedImages, actualImages             int
@@ -140,6 +141,11 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		{name: "image quantity exceeds one-image wallet before submission", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 4, wallet: 20000, insufficient: true},
 		{name: "image override reserves extra quantity", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 1, outboundImages: 4, want: 80000, unit: billingexpr.BillingUnitRequest},
 		{name: "image override cannot exceed remaining wallet", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 1, outboundImages: 4, wallet: 40000, reserveInsufficient: true, refund: true},
+		{name: "channel discount includes group and tool surcharge", expression: flat + ` * (param("fast") == true ? 2 : 1)`, groupRatio: 1.5, channelRatio: common.GetPointer(0.8), tool: true, want: 14400, unit: billingexpr.BillingUnitRequest},
+		{name: "channel discount audio settlement", expression: flat, audio: true, channelRatio: common.GetPointer(0.8), want: 4000, unit: billingexpr.BillingUnitRequest},
+		{name: "channel discount realtime settlement", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, channelRatio: common.GetPointer(0.8), want: 3200, unit: billingexpr.BillingUnitToken},
+		{name: "free channel includes tools", expression: flat, channelRatio: common.GetPointer(0.0), tool: true, unit: billingexpr.BillingUnitRequest},
+		{name: "channel discount image count reconciliation", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, channelRatio: common.GetPointer(0.8), want: 32000, unit: billingexpr.BillingUnitRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			quota := startingQuota
@@ -171,11 +177,14 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			}
 			cost, trace, err := billingexpr.RunExprWithRequest(tc.expression, billingexpr.TokenParams{P: float64(tc.estimate), Len: float64(tc.estimate)}, *request)
 			require.NoError(t, err)
-			reservation, err := billingexpr.QuotaRoundStrict(cost / 1_000_000 * common.QuotaPerUnit * group)
+			reservation, err := billingexpr.QuotaRoundStrict(cost / 1_000_000 * common.QuotaPerUnit * group * optionalRatioValue(tc.channelRatio))
 			require.NoError(t, err)
 			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation}
 			snapshot.EstimatedImageCount = trace.ImageCount
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
+			snapshot.ChannelRatio = tc.channelRatio
+			info.PriceData.ChannelRatio = tc.channelRatio
+			info.ChannelOtherSettings.ChannelRatio = tc.channelRatio
 			info.SetEstimatePromptTokens(tc.estimate)
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
@@ -1173,6 +1182,143 @@ func TestCalculateTextQuotaSummaryFixedPriceAppliesImageCountOnceAndAllowsOverri
 	relayInfo.PriceData.AddOtherRatio("n", 2)
 	summary = calculateTextQuotaSummary(ctx, relayInfo, usage)
 	require.Equal(t, 120000, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryUsesCompletingChannelRatioOnRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ratio := func(v float64) *float64 { return &v }
+
+	usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100}
+	newInfo := func(frozen *float64, completing dto.ChannelOtherSettings) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			OriginModelName: "gpt-4o",
+			PriceData: hosttypes.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 2,
+				GroupRatioInfo:  hosttypes.GroupRatioInfo{GroupRatio: 1},
+				ChannelRatio:    frozen,
+			},
+			ChannelMeta: &relaycommon.ChannelMeta{ChannelOtherSettings: completing},
+			StartTime:   time.Now(),
+		}
+	}
+
+	// Pre-consume priced channel A at 0.8; the retry completes on a channel
+	// without a promotion, so settlement must charge the full 1200.
+	assert.Equal(t, 1200, calculateTextQuotaSummary(ctx, newInfo(ratio(0.8), dto.ChannelOtherSettings{}), usage).Quota)
+	// Another discounted channel settles at its own ratio, not A's.
+	assert.Equal(t, 600, calculateTextQuotaSummary(ctx, newInfo(ratio(0.8), dto.ChannelOtherSettings{ChannelRatio: ratio(0.5)}), usage).Quota)
+	// Without channel metadata the frozen pricing-time ratio remains authoritative.
+	assert.Equal(t, 960, calculateTextQuotaSummary(ctx, &relaycommon.RelayInfo{
+		OriginModelName: "gpt-4o",
+		PriceData: hosttypes.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 2,
+			GroupRatioInfo:  hosttypes.GroupRatioInfo{GroupRatio: 1},
+			ChannelRatio:    ratio(0.8),
+		},
+		StartTime: time.Now(),
+	}, usage).Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesChannelRatioOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ratio := func(v float64) *float64 { return &v }
+
+	usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100}
+	// 1000 prompt * 1 + 100 completion * 2 = 1200 quota at model/group 1.
+	tests := []struct {
+		name         string
+		channelRatio *float64
+		wantQuota    int
+	}{
+		{name: "absent means full price", channelRatio: nil, wantQuota: 1200},
+		{name: "explicit one keeps full price", channelRatio: ratio(1), wantQuota: 1200},
+		{name: "discounted once", channelRatio: ratio(0.8), wantQuota: 960},
+		{name: "zero is free", channelRatio: ratio(0), wantQuota: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			relayInfo := &relaycommon.RelayInfo{
+				OriginModelName: "gpt-4o",
+				PriceData: hosttypes.PriceData{
+					ModelRatio:      1,
+					CompletionRatio: 2,
+					GroupRatioInfo:  hosttypes.GroupRatioInfo{GroupRatio: 1},
+					ChannelRatio:    tc.channelRatio,
+				},
+				StartTime: time.Now(),
+			}
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+			assert.Equal(t, tc.wantQuota, summary.Quota)
+			assert.Equal(t, float64(1), relayInfo.PriceData.GroupRatioInfo.GroupRatio, "group ratio identity must stay unchanged")
+		})
+	}
+}
+
+func TestCalculateTextQuotaSummaryChannelRatioCoversFixedPriceAndTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ratio := func(v float64) *float64 { return &v }
+
+	fixedPrice := 0.01
+	for _, tc := range []struct {
+		name         string
+		channelRatio *float64
+		wantQuota    int
+	}{
+		{name: "fixed price default", wantQuota: 5000},
+		{name: "fixed price discounted", channelRatio: ratio(0.8), wantQuota: 4000},
+		{name: "fixed price free", channelRatio: ratio(0), wantQuota: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			relayInfo := &relaycommon.RelayInfo{
+				OriginModelName: "dall-e-3",
+				PriceData: hosttypes.PriceData{
+					ModelPrice:     fixedPrice,
+					UsePrice:       true,
+					GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1},
+					ChannelRatio:   tc.channelRatio,
+				},
+				StartTime: time.Now(),
+			}
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{PromptTokens: 1, TotalTokens: 1})
+
+			assert.Equal(t, tc.wantQuota, summary.Quota)
+		})
+	}
+
+	toolRelayInfo := func(channelRatio *float64) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			OriginModelName: "o1",
+			PriceData: hosttypes.PriceData{
+				ModelRatio:     1,
+				GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1},
+				ChannelRatio:   channelRatio,
+			},
+			ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+				BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+					dto.BuildInToolWebSearchPreview: {CallCount: 1},
+				},
+			},
+		}
+	}
+
+	baseline := calculateTextQuotaSummary(ctx, toolRelayInfo(nil), &dto.Usage{})
+	discounted := calculateTextQuotaSummary(ctx, toolRelayInfo(ratio(0.8)), &dto.Usage{})
+
+	require.False(t, baseline.ToolCallSurchargeQuota.IsZero())
+	expected := decimal.NewFromFloat(baseline.ToolCallSurchargeQuota.InexactFloat64() * 0.8)
+	assert.True(t, expected.Equal(discounted.ToolCallSurchargeQuota), "tool surcharge must be discounted exactly once")
+	assert.Equal(t, common.QuotaFromDecimal(discounted.ToolCallSurchargeQuota), discounted.Quota)
+	// A free channel charges nothing and must not fall back to the minimum 1.
+	assert.Zero(t, calculateTextQuotaSummary(ctx, toolRelayInfo(ratio(0)), &dto.Usage{}).Quota)
 }
 
 func TestCalculateTextToolCallSurchargeGeneralizedBuiltInTools(t *testing.T) {

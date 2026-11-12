@@ -57,6 +57,7 @@ export function useSidebarData(): SidebarData {
         id: 'chat',
         title: t('Chat'),
         items: [
+          { title: t('AI Creation'), url: '/creation', icon: FlaskConical },
           {
             title: t('Playground'),
             url: '/playground',
@@ -73,6 +74,12 @@ export function useSidebarData(): SidebarData {
         id: 'general',
         title: t('General'),
         items: [
+          { title: t('Usage reports'), url: '/reports', icon: FileText },
+          {
+            title: t('Enterprise management'),
+            url: '/enterprises',
+            icon: Users,
+          },
           {
             title: t('Overview'),
             url: '/dashboard/overview',

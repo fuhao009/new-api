@@ -36,6 +36,9 @@ type QuotaInfo struct {
 	ModelPrice    float64
 	ModelRatio    float64
 	GroupRatio    float64
+	// ChannelRatio is the optional per-channel promotion multiplier applied
+	// once after the group ratio. Nil means absent (1); 0 makes it free.
+	ChannelRatio *float64
 }
 
 func hasCustomModelRatio(modelName string, currentRatio float64) bool {
@@ -53,7 +56,7 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 		groupRatio := decimal.NewFromFloat(info.GroupRatio)
 
 		quota := modelPrice.Mul(quotaPerUnit).Mul(groupRatio)
-		return common.QuotaFromDecimalChecked(quota)
+		return common.QuotaFromDecimalChecked(applyChannelRatioDecimal(info.ChannelRatio, quota))
 	}
 
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(info.ModelName))
@@ -76,9 +79,10 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 	quota = quota.Add(outputAudioTokens.Mul(audioRatio).Mul(audioCompletionRatio))
 
 	quota = quota.Mul(ratio)
+	quota = applyChannelRatioDecimal(info.ChannelRatio, quota)
 
 	// If ratio is not zero and quota is less than or equal to zero, set quota to 1
-	if !ratio.IsZero() && quota.LessThanOrEqual(decimal.Zero) {
+	if !ratio.IsZero() && !isZeroChannelRatio(info.ChannelRatio) && quota.LessThanOrEqual(decimal.Zero) {
 		quota = decimal.NewFromInt(1)
 	}
 
@@ -90,6 +94,9 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return nil
 	}
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	if relayInfo.EnterpriseId > 0 {
+		userQuota, err = model.GetEnterpriseAvailableQuota(relayInfo.EnterpriseId, relayInfo.UserId)
+	}
 	if err != nil {
 		return err
 	}
@@ -129,10 +136,11 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   relayInfo.UsePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: actualGroupRatio,
+		ModelName:    modelName,
+		UsePrice:     relayInfo.UsePrice,
+		ModelRatio:   modelRatio,
+		GroupRatio:   actualGroupRatio,
+		ChannelRatio: relayInfo.BillingChannelRatio(),
 	}
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
@@ -193,10 +201,11 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:    modelName,
+		UsePrice:     usePrice,
+		ModelRatio:   modelRatio,
+		GroupRatio:   groupRatio,
+		ChannelRatio: relayInfo.BillingChannelRatio(),
 	}
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
@@ -332,10 +341,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  billingModelName,
-		UsePrice:   usePrice,
-		ModelRatio: modelRatio,
-		GroupRatio: groupRatio,
+		ModelName:    billingModelName,
+		UsePrice:     usePrice,
+		ModelRatio:   modelRatio,
+		GroupRatio:   groupRatio,
+		ChannelRatio: relayInfo.BillingChannelRatio(),
 	}
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
@@ -438,7 +448,11 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
 
 	// 1) Consume from wallet quota OR subscription item
-	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
+	if relayInfo != nil && relayInfo.EnterpriseId > 0 {
+		if err = model.AdjustEnterpriseRequestQuota(relayInfo.EnterpriseId, relayInfo.UserId, relayInfo.TokenId, relayInfo.RequestId, quota); err != nil {
+			return result, err
+		}
+	} else if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
 		if relayInfo.SubscriptionId == 0 {
 			return result, errors.New("subscription id is missing")
 		}
@@ -474,7 +488,7 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 		result.TokenApplied = true
 	}
 
-	if sendEmail {
+	if sendEmail && relayInfo.EnterpriseId == 0 {
 		if (quota + preConsumedQuota) != 0 {
 			checkAndSendQuotaNotify(relayInfo, quota, preConsumedQuota)
 		}

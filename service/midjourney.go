@@ -52,6 +52,8 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	}
 
 	task.Quota = quota
+	task.EnterpriseId = relayInfo.EnterpriseId
+	task.EnterpriseRequestId = relayInfo.RequestId
 	task.BillingChannelId = task.ChannelId
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
@@ -99,7 +101,13 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	var fundingErr error
+	if task.EnterpriseId > 0 {
+		fundingErr = model.RefundEnterpriseQuota(task.EnterpriseRequestId)
+	} else {
+		fundingErr = model.IncreaseUserQuota(task.UserId, quota, false)
+	}
+	if err := fundingErr; err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund Midjourney user quota, task %s: %s", task.MjId, err.Error()))
 		return false
 	}

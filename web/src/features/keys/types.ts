@@ -25,6 +25,7 @@ import { z } from 'zod'
 export const apiKeySchema = z.object({
   id: z.number(),
   name: z.string(),
+  category: z.string().optional(),
   key: z.string(),
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
   remain_quota: z.number(),

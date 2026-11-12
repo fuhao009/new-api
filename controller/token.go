@@ -304,6 +304,10 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if token.EnterpriseId != 0 {
+		common.ApiErrorT(c, "Use enterprise management for enterprise API keys")
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
@@ -409,6 +413,10 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if token.EnterpriseId != 0 {
+		common.ApiErrorT(c, "Use enterprise management for enterprise API keys")
+		return
+	}
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id

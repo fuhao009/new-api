@@ -5,32 +5,10 @@
 package common
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
-
-type stringWriter interface {
-	io.Writer
-	writeString(string) (int, error)
-}
-
-type stringWrapper struct {
-	io.Writer
-}
-
-func (w stringWrapper) writeString(str string) (int, error) {
-	return w.Writer.Write([]byte(str))
-}
-
-func checkWriter(writer io.Writer) stringWriter {
-	if w, ok := writer.(stringWriter); ok {
-		return w
-	} else {
-		return stringWrapper{writer}
-	}
-}
 
 // Server-Sent Events
 // W3C Working Draft 29 October 2009
@@ -39,14 +17,10 @@ func checkWriter(writer io.Writer) stringWriter {
 var writeContentType = []string{"text/event-stream"}
 var noCache = []string{"no-cache"}
 
-var fieldReplacer = strings.NewReplacer(
-	"\n", "\\n",
-	"\r", "\\r")
-
-var dataReplacer = strings.NewReplacer(
-	"\n", "\n",
-	"\r", "\\r")
-
+// CustomEvent renders one server-sent event. Data is the pre-framed event
+// body (for example "data: {...}"); the blank-line event terminator is
+// appended only when Data starts with "data". Event, Id, and Retry are kept
+// for API compatibility; current callers always emit fully framed payloads.
 // CustomEvent does not synchronize writes to the response writer. Streaming
 // callers must serialize event writes at the stream level.
 type CustomEvent struct {
@@ -56,22 +30,43 @@ type CustomEvent struct {
 	Data  any
 }
 
-func encode(writer io.Writer, event CustomEvent) error {
-	w := checkWriter(writer)
-	return writeData(w, event.Data)
-}
-
-func writeData(w stringWriter, data any) error {
-	dataReplacer.WriteString(w, fmt.Sprint(data))
-	if strings.HasPrefix(data.(string), "data") {
-		w.writeString("\n\n")
-	}
-	return nil
-}
-
 func (r CustomEvent) Render(w http.ResponseWriter) error {
 	r.WriteContentType(w)
-	return encode(w, r)
+	text := r.Data.(string)
+	remaining := text
+	for {
+		fragment, rest, found := strings.Cut(remaining, "\r")
+		if fragment != "" {
+			n, err := io.WriteString(w, fragment)
+			if err != nil {
+				return err
+			}
+			if n != len(fragment) {
+				return io.ErrShortWrite
+			}
+		}
+		if !found {
+			break
+		}
+		n, err := io.WriteString(w, "\\r")
+		if err != nil {
+			return err
+		}
+		if n != len("\\r") {
+			return io.ErrShortWrite
+		}
+		remaining = rest
+	}
+	if strings.HasPrefix(text, "data") {
+		n, err := io.WriteString(w, "\n\n")
+		if err != nil {
+			return err
+		}
+		if n != len("\n\n") {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func (r CustomEvent) WriteContentType(w http.ResponseWriter) {

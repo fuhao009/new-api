@@ -51,6 +51,8 @@ const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
   webhook: Webhook,
   bark: Bell,
   gotify: Server,
+  dingtalk: Webhook,
+  wecom: Webhook,
 }
 
 // ============================================================================
@@ -193,7 +195,7 @@ export function NotificationTab({
           )}
 
           {/* Webhook Settings */}
-          {notifyType === 'webhook' && (
+          {['webhook', 'dingtalk', 'wecom'].includes(notifyType) && (
             <>
               <div className='space-y-1.5'>
                 <Label htmlFor='webhookUrl'>{t('Webhook URL')}</Label>
@@ -206,6 +208,7 @@ export function NotificationTab({
                   placeholder={t('https://example.com/webhook')}
                 />
               </div>
+              {notifyType !== 'wecom' && (
               <div className='space-y-1.5'>
                 <Label htmlFor='webhookSecret'>{t('Webhook Secret')}</Label>
                 <PasswordInput
@@ -217,6 +220,17 @@ export function NotificationTab({
                   placeholder={t('Enter secret key')}
                 />
               </div>
+              )}
+              {notifyType === 'dingtalk' && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('DingTalk signing secret is optional. Use the robot webhook URL with its access_token.')}
+                </p>
+              )}
+              {notifyType === 'wecom' && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('Use the WeCom robot webhook URL with its key.')}
+                </p>
+              )}
             </>
           )}
 

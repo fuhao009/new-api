@@ -22,6 +22,7 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
+	setEnterpriseRoutes(apiRouter)
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
@@ -78,7 +79,7 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/auth/logout", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AuthLogout)
 			userRoute.POST("/register", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Register)
 			userRoute.GET("/login/encryption-key", middleware.DisableCache(), controller.GetPasswordEncryptionKey)
-			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Login)
+			userRoute.POST("/login", middleware.PasswordLoginRateLimit(), middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Login)
 			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.Verify2FALogin)
 			userRoute.POST("/login/verify", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.VerifyLogin)
 			userRoute.POST("/login/passkey/begin", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.LoginPasskeyBegin)
@@ -94,6 +95,9 @@ func SetApiRouter(router *gin.Engine) {
 			selfRoute.Use(middleware.DisableCache(), middleware.UserAuth())
 			{
 				selfRoute.GET("/sessions", middleware.DisableCache(), controller.GetLoginSessions)
+				selfRoute.GET("/trusted-devices", controller.ListTrustedDevices)
+				selfRoute.POST("/trusted-devices", middleware.CriticalRateLimit(), controller.EnrollTrustedDevice)
+				selfRoute.DELETE("/trusted-devices/:id", middleware.CriticalRateLimit(), controller.RevokeTrustedDevice)
 				selfRoute.DELETE("/sessions/:sid", middleware.DisableCache(), controller.DeleteLoginSession)
 				selfRoute.POST("/sessions/revoke-others", middleware.DisableCache(), controller.RevokeOtherLoginSessions)
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
@@ -286,6 +290,8 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.GET("/", controller.GetAllTokens)
 			tokenRoute.GET("/search", middleware.SearchRateLimit(), controller.SearchTokens)
 			tokenRoute.GET("/auto-groups", controller.GetTokenAutoGroups)
+			tokenRoute.GET("/filter", controller.FilterTokens)
+			tokenRoute.POST("/batch/update", middleware.CriticalRateLimit(), controller.BatchUpdateTokens)
 			tokenRoute.GET("/:id", controller.GetToken)
 			tokenRoute.POST("/:id/key", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKey)
 			tokenRoute.POST("/", controller.AddToken)

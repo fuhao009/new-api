@@ -34,6 +34,7 @@ const i18nKeys = {
   'Dynamic Pricing': 'Dynamic Pricing',
   'Matched Tier': 'Matched Tier',
   'Group Ratio': 'Group Ratio',
+  'Channel Ratio': 'Channel Ratio',
   'Total Cost': 'Total Cost',
   'Usage parameters': 'Usage parameters',
 }
@@ -229,6 +230,31 @@ describe('usage facts billing details', () => {
     expect(screen.queryByText('Usage parameters')).toBeNull()
     expect(screen.queryByText('resolution')).toBeNull()
     expect(screen.queryByText('seconds')).toBeNull()
+    expect(screen.getByText('Total Cost')).toBeInTheDocument()
+  })
+
+  test('shows the public channel ratio next to the group ratio without folding it in', () => {
+    queryClients.push(
+      renderDetails({
+        model_ratio: 1,
+        group_ratio: 1.5,
+        channel_ratio: 0.8,
+      })
+    )
+
+    expect(rowValue('Group Ratio')).toBe('1.5000x')
+    expect(rowValue('Channel Ratio')).toBe('0.8000x')
+  })
+
+  test('omits the channel ratio row when the channel charged the original price', () => {
+    queryClients.push(
+      renderDetails({
+        group_ratio: 1,
+        channel_ratio: 1,
+      })
+    )
+
+    expect(screen.queryByText('Channel Ratio')).toBeNull()
     expect(screen.getByText('Total Cost')).toBeInTheDocument()
   })
 })

@@ -25,6 +25,8 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'trusted_device.enroll'
+  | 'enterprise.manage'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -51,6 +53,10 @@ export type SecurityProofScope =
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | {
+      scope: 'enterprise.manage'
+      context: { enterprise_id: number; action: string; target_id: number }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -91,6 +97,7 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'enterprise.manage'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

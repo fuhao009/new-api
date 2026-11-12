@@ -83,6 +83,13 @@ func Login(c *gin.Context) {
 		Password: password,
 	}
 	err = user.ValidateAndFill()
+	if !errors.Is(err, model.ErrDatabase) && user.Id > 0 {
+		rawDevice, _ := c.Cookie(trustedDeviceCookie)
+		guardErr := model.CheckPasswordLoginGuard(&user, err == nil, rawDevice)
+		if guardErr != nil {
+			err = guardErr
+		}
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrDatabase):
@@ -1340,7 +1347,7 @@ func UpdateUserSetting(c *gin.Context) {
 	}
 
 	// 验证预警类型
-	if req.QuotaWarningType != dto.NotifyTypeEmail && req.QuotaWarningType != dto.NotifyTypeWebhook && req.QuotaWarningType != dto.NotifyTypeBark && req.QuotaWarningType != dto.NotifyTypeGotify {
+	if req.QuotaWarningType != dto.NotifyTypeEmail && req.QuotaWarningType != dto.NotifyTypeWebhook && req.QuotaWarningType != dto.NotifyTypeBark && req.QuotaWarningType != dto.NotifyTypeGotify && req.QuotaWarningType != dto.NotifyTypeDingTalk && req.QuotaWarningType != dto.NotifyTypeWeCom {
 		common.ApiErrorT(c, "Invalid warning type")
 		return
 	}
@@ -1360,6 +1367,12 @@ func UpdateUserSetting(c *gin.Context) {
 		// 验证URL格式
 		if _, err := url.ParseRequestURI(req.WebhookUrl); err != nil {
 			common.ApiErrorT(c, "Invalid Webhook URL")
+			return
+		}
+	}
+	if req.QuotaWarningType == dto.NotifyTypeDingTalk || req.QuotaWarningType == dto.NotifyTypeWeCom {
+		if err := service.ValidateRobotWebhookURL(req.QuotaWarningType, req.WebhookUrl); err != nil {
+			common.ApiErrorT(c, "Invalid robot webhook URL")
 			return
 		}
 	}
@@ -1444,7 +1457,7 @@ func UpdateUserSetting(c *gin.Context) {
 	settings.BarkUrl = ""
 	settings.GotifyUrl, settings.GotifyToken, settings.GotifyPriority = "", "", 0
 	switch req.QuotaWarningType {
-	case dto.NotifyTypeWebhook:
+	case dto.NotifyTypeWebhook, dto.NotifyTypeDingTalk, dto.NotifyTypeWeCom:
 		settings.WebhookUrl = req.WebhookUrl
 		settings.WebhookSecret = req.WebhookSecret
 	case dto.NotifyTypeEmail:

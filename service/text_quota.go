@@ -64,6 +64,9 @@ type textQuotaSummary struct {
 	ToolSurchargeItems     []ToolSurchargeItem
 	ToolCallSurchargeQuota decimal.Decimal
 	FixedPriceBilling      bool
+	// ChannelRatio is the optional per-channel promotion multiplier applied
+	// once after model and group pricing. Nil means absent (1).
+	ChannelRatio *float64
 }
 
 // hasBillableUsage reports whether this request should incur any charge.
@@ -180,8 +183,9 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
 	}
-
-	return surcharge
+	// Tool charges are billed through the same channel promotion as token
+	// charges, and only here, so the discount is applied exactly once.
+	return applyChannelRatioDecimal(summary.ChannelRatio, surcharge)
 }
 
 // noteQuotaClamp records the first quota saturation event onto relayInfo so it
@@ -205,6 +209,7 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			quota, clamp := common.QuotaFromDecimalChecked(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
 				Mul(decimal.NewFromFloat(snap.GroupRatio)).
+				Mul(decimal.NewFromFloat(snap.EffectiveChannelRatio())).
 				Add(summary.ToolCallSurchargeQuota))
 			noteQuotaClamp(relayInfo, clamp)
 			return quota
@@ -219,6 +224,20 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	)
 	noteQuotaClamp(relayInfo, clamp)
 	return total
+}
+
+// applyChannelRatioDecimal applies the optional channel promotion multiplier
+// once to an already model- and group-priced charge. Nil leaves the value
+// unchanged; an explicit zero yields zero (a free channel).
+func applyChannelRatioDecimal(ratio *float64, value decimal.Decimal) decimal.Decimal {
+	if ratio == nil {
+		return value
+	}
+	return value.Mul(decimal.NewFromFloat(*ratio))
+}
+
+func isZeroChannelRatio(ratio *float64) bool {
+	return ratio != nil && *ratio == 0
 }
 
 // calculateTextQuotaSummary expects a usage already remapped by
@@ -239,6 +258,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		CacheCreationRatio5m: relayInfo.PriceData.CacheCreation5mRatio,
 		CacheCreationRatio1h: relayInfo.PriceData.CacheCreation1hRatio,
 		UsageSemantic:        usageSemanticFromUsage(relayInfo, usage),
+		ChannelRatio:         relayInfo.BillingChannelRatio(),
 	}
 	summary.IsClaudeUsageSemantic = summary.UsageSemantic == "anthropic"
 
@@ -350,9 +370,10 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		quotaCalculateDecimal := promptQuota.Add(completionQuota).Mul(ratio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
 		quotaCalculateDecimal = relayInfo.PriceData.ApplyOtherRatiosToDecimal(quotaCalculateDecimal)
+		quotaCalculateDecimal = applyChannelRatioDecimal(summary.ChannelRatio, quotaCalculateDecimal)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 
-		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
+		if !ratio.IsZero() && !isZeroChannelRatio(summary.ChannelRatio) && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
 			quotaCalculateDecimal = decimal.NewFromInt(1)
 		}
 		quota, clamp := common.QuotaFromDecimalChecked(quotaCalculateDecimal)
@@ -362,6 +383,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		quotaCalculateDecimal := dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
 		quotaCalculateDecimal = relayInfo.PriceData.ApplyOtherRatiosToDecimal(quotaCalculateDecimal)
+		quotaCalculateDecimal = applyChannelRatioDecimal(summary.ChannelRatio, quotaCalculateDecimal)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quota, clamp := common.QuotaFromDecimalChecked(quotaCalculateDecimal)
 		summary.Quota = quota
@@ -370,7 +392,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	if !summary.hasBillableUsage() {
 		summary.Quota = 0
-	} else if !ratio.IsZero() && summary.Quota == 0 {
+	} else if !ratio.IsZero() && !isZeroChannelRatio(summary.ChannelRatio) && summary.Quota == 0 {
 		summary.Quota = 1
 	}
 
@@ -434,6 +456,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			Div(decimal.NewFromInt(1000)).
 			Mul(decimal.NewFromFloat(summary.GroupRatio)).
 			Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+		q = applyChannelRatioDecimal(summary.ChannelRatio, q)
 		extraContent = append(extraContent, common.NewMessage("{{name}} called {{count}} times, cost {{quota}}", map[string]any{
 			"name":  item.Name,
 			"count": item.Count,
@@ -442,6 +465,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	if summary.AudioInputPrice > 0 && summary.AudioTokens > 0 {
 		q := decimal.NewFromFloat(summary.AudioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(decimal.NewFromInt(int64(summary.AudioTokens))).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+		q = applyChannelRatioDecimal(summary.ChannelRatio, q)
 		extraContent = append(extraContent, common.NewMessage("Audio input cost {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaFromDecimal(q))}))
 	}
 

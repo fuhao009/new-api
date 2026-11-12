@@ -51,7 +51,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return nil
 	}
 	delta := actualQuota - s.preConsumedQuota
-	if delta == 0 {
+	if delta == 0 && s.funding.Source() != BillingSourceEnterprise {
 		s.settled = true
 		return nil
 	}
@@ -139,6 +139,9 @@ func (s *BillingSession) needsRefundLocked() bool {
 	if s.settled || s.refunded || s.fundingSettled {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
 		return false
+	}
+	if s.funding.Source() == BillingSourceEnterprise {
+		return true
 	}
 	if s.tokenConsumed > 0 {
 		return true
@@ -255,6 +258,8 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 
 func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) error {
 	switch funding := s.funding.(type) {
+	case *EnterpriseFunding:
+		return funding.PreConsume(delta)
 	case *WalletFunding:
 		if requireAvailableQuota {
 			// Image quantity is known before submission, including retries and
@@ -294,6 +299,12 @@ func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) e
 
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
+	case *EnterpriseFunding:
+		if err := model.ReserveEnterpriseQuota(funding.enterpriseId, funding.userId, funding.tokenId, funding.requestId, funding.consumed-delta); err != nil {
+			common.SysError(err.Error())
+		} else {
+			funding.consumed -= delta
+		}
 	case *WalletFunding:
 		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
 			common.SysLog(common.LogText("error rolling back wallet funding reserve: %s", err.Error()))
@@ -381,6 +392,13 @@ func (s *BillingSession) syncRelayInfo() {
 func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
 	if relayInfo == nil {
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+	if relayInfo.EnterpriseId > 0 {
+		session := &BillingSession{relayInfo: relayInfo, funding: &EnterpriseFunding{enterpriseId: relayInfo.EnterpriseId, userId: relayInfo.UserId, tokenId: relayInfo.TokenId, requestId: relayInfo.RequestId}, lang: i18n.StatedLang(c)}
+		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
+			return nil, apiErr
+		}
+		return session, nil
 	}
 
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)

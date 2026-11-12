@@ -75,6 +75,31 @@ type ChannelMeta struct {
 	SupportStreamOptions bool // 是否支持流式选项
 }
 
+// EffectiveChannelRatio returns the optional promotion ratio of this channel.
+// Nil means absent (1). Each attempt re-reads it from the channel metadata, so
+// a retry that lands on another channel settles at that channel's ratio.
+func (m *ChannelMeta) EffectiveChannelRatio() *float64 {
+	if m == nil {
+		return nil
+	}
+	return m.ChannelOtherSettings.EffectiveChannelRatio()
+}
+
+// SelectedChannelRatio returns the promotion ratio of the channel already
+// selected for this request and whether the channel settings are present in
+// the context. A nil ratio with ok=true means the channel has no promotion
+// (effective 1).
+func SelectedChannelRatio(c *gin.Context) (*float64, bool) {
+	if c == nil {
+		return nil, false
+	}
+	settings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
+	if !ok {
+		return nil, false
+	}
+	return settings.EffectiveChannelRatio(), true
+}
+
 type TokenCountMeta struct {
 	//promptTokens int
 	estimatePromptTokens int
@@ -85,6 +110,7 @@ type RelayInfo struct {
 	TokenKey          string
 	TokenGroup        string
 	UserId            int
+	EnterpriseId      int
 	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
 	UserGroup         string // 用户所在分组
 	TokenUnlimited    bool
@@ -235,6 +261,31 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+}
+
+// BillingChannelRatio returns the effective promotion ratio of the channel
+// that completes the request. ChannelMeta is refreshed for every attempt, so a
+// retry settles at the succeeding channel's ratio. When no channel metadata is
+// attached (unit tests, offline recalculation) the pricing-time ratio is used.
+func (info *RelayInfo) BillingChannelRatio() *float64 {
+	if info == nil {
+		return nil
+	}
+	if info.ChannelMeta != nil {
+		return info.ChannelMeta.EffectiveChannelRatio()
+	}
+	return info.PriceData.OptionalChannelRatio()
+}
+
+// LogChannelRatio returns the promotion ratio to publish on usage logs: nil
+// when the channel has no promotion or the ratio is exactly 1. Callers omit
+// the field so a plain channel log stays unchanged.
+func (info *RelayInfo) LogChannelRatio() *float64 {
+	ratio := info.BillingChannelRatio()
+	if ratio == nil || *ratio == 1 {
+		return nil
+	}
+	return ratio
 }
 
 // UpdateImageCount replaces the billable quantity without changing the frozen
@@ -618,12 +669,13 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		Request:         request,
 		ReasoningEffort: reasoningEffort,
 
-		RequestId:  reqId,
-		UserId:     common.GetContextKeyInt(c, constant.ContextKeyUserId),
-		UsingGroup: common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
-		UserGroup:  common.GetContextKeyString(c, constant.ContextKeyUserGroup),
-		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
-		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
+		RequestId:    reqId,
+		UserId:       common.GetContextKeyInt(c, constant.ContextKeyUserId),
+		EnterpriseId: c.GetInt("enterprise_id"),
+		UsingGroup:   common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+		UserGroup:    common.GetContextKeyString(c, constant.ContextKeyUserGroup),
+		UserQuota:    common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
+		UserEmail:    common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
 		OriginModelName: originModelName,
 

@@ -40,6 +40,7 @@ interface FooterProps {
   columns?: FooterColumnProps[]
   copyright?: string
   className?: string
+  compact?: boolean
 }
 
 const NEW_API_FOOTER_ATTRIBUTION_KEY = [
@@ -222,6 +223,22 @@ export function Footer(props: FooterProps) {
 
   const displayColumns = props.columns ?? fallbackColumns
 
+  if (props.compact) {
+    return (
+      <footer
+        className={cn(
+          'border-border/40 relative z-10 border-t',
+          props.className
+        )}
+      >
+        <div className='mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-3 gap-y-2 px-6 py-4 text-xs'>
+          <LegalLinks />
+          <ProjectAttribution currentYear={currentYear} inline />
+        </div>
+      </footer>
+    )
+  }
+
   if (footerHtml) {
     return (
       <footer
@@ -272,14 +289,14 @@ export function Footer(props: FooterProps) {
           {/* Links columns */}
           {isDemoSiteMode && (
             <div className='grid grid-cols-3 gap-8 md:gap-16'>
-              {displayColumns.map((column, index) => (
-                <div key={index}>
+              {displayColumns.map((column) => (
+                <div key={column.title}>
                   <p className='text-muted-foreground/50 mb-3 text-xs font-medium tracking-wider uppercase'>
                     {t(column.title)}
                   </p>
                   <ul className='space-y-2.5'>
-                    {column.links.map((link, linkIndex) => (
-                      <li key={linkIndex}>
+                    {column.links.map((link) => (
+                      <li key={link.href}>
                         <FooterLinkItem link={link} />
                       </li>
                     ))}

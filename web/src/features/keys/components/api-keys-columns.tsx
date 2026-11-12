@@ -79,6 +79,11 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
   return useMemo<ColumnDef<ApiKey>[]>(
     () => [
       {
+        accessorKey: 'category',
+        header: t('Category'),
+        cell: ({ row }) => row.original.category || t('Uncategorized'),
+      },
+      {
         id: 'select',
         header: ({ table }) => (
           <Checkbox

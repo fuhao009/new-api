@@ -30,7 +30,7 @@ func TestTokenAutoGroupsRoundTripThroughRedisHashCache(t *testing.T) {
 
 func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 	server := useUserCacheMiniRedis(t)
-	token := Token{Id: 43, UserId: 7, Key: "token-user-quota-cache-key", Name: "user-quota-cache", AllowUserQuotaQuery: true}
+	token := Token{Id: 43, UserId: 7, EnterpriseId: 12, Key: "token-user-quota-cache-key", Name: "user-quota-cache", AllowUserQuotaQuery: true}
 
 	initialized, err := cacheInitToken(token)
 	require.NoError(t, err)
@@ -38,6 +38,7 @@ func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 	cached, err := cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
 	assert.True(t, cached.AllowUserQuotaQuery)
+	assert.Equal(t, 12, cached.EnterpriseId, "cached enterprise keys must never fall back to personal billing")
 	assert.Positive(t, server.TTL(getTokenCacheKey(token.Key)))
 }
 

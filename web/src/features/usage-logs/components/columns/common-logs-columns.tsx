@@ -330,6 +330,17 @@ function buildTypeDetailSegments(
     }
   }
 
+  const channelRatio = other.channel_ratio
+  if (
+    channelRatio != null &&
+    Number.isFinite(channelRatio) &&
+    channelRatio !== 1
+  ) {
+    segments.push({
+      text: `${t('Channel Ratio')} ${formatRatioCompact(channelRatio)}x`,
+    })
+  }
+
   if (other.is_system_prompt_overwritten) {
     segments.push({
       text: t('System Prompt Override'),

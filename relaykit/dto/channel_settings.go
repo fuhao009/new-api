@@ -1,7 +1,9 @@
 package dto
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -12,6 +14,7 @@ import (
 )
 
 type ChannelSettings struct {
+	ClaudeCLI                 bool   `json:"claude_cli,omitempty"`
 	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
 	ForceFormat               bool   `json:"force_format,omitempty"`
 	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
@@ -139,6 +142,46 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// ChannelRatio is an optional promotion multiplier for this channel. It is
+	// applied once after model and group pricing, so it discounts (or frees)
+	// every charge billed through the channel. Absent means 1; 0 is a free
+	// channel. Values must be finite and within 0..1.
+	ChannelRatio *float64 `json:"channel_ratio,omitempty"`
+}
+
+// EffectiveChannelRatio returns the optional promotion ratio, or nil when the
+// setting is absent. Absent means 1. Stored values outside the supported 0..1
+// range also return nil so a corrupted setting can never become a negative or
+// unbounded multiplier.
+func (s *ChannelOtherSettings) EffectiveChannelRatio() *float64 {
+	if s == nil || s.ChannelRatio == nil {
+		return nil
+	}
+	ratio := *s.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return nil
+	}
+	return &ratio
+}
+
+// ErrChannelRatioOutOfRange is returned when a channel promotion ratio is not
+// a finite number within 0..1 (0 allowed). The text is a web-console message
+// key, so keep it verbatim.
+var ErrChannelRatioOutOfRange = errors.New("Channel promotion ratio must be between 0 and 1")
+
+// ValidateChannelRatio validates the optional promotion ratio. Absent keeps
+// the default multiplier of 1; explicit 0 is a valid free channel. NaN and
+// infinite values are rejected here as well, even though JSON cannot produce
+// them, because the setting can also arrive through a decoded config map.
+func (s *ChannelOtherSettings) ValidateChannelRatio() error {
+	if s == nil || s.ChannelRatio == nil {
+		return nil
+	}
+	ratio := *s.ChannelRatio
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+		return ErrChannelRatioOutOfRange
+	}
+	return nil
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

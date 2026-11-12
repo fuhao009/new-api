@@ -116,11 +116,13 @@ type TaskPrivateData struct {
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource       string              `json:"billing_source,omitempty"` // "wallet" 或 "subscription"
+	EnterpriseId        int                 `json:"enterprise_id,omitempty"`
+	EnterpriseRequestId string              `json:"enterprise_request_id,omitempty"`
+	SubscriptionId      int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	TokenId             int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName            string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext      *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// ResponsesBackground records that the openai_responses create request
 	// asked for background:true. Every task is durable and survives client
 	// disconnect regardless; this only echoes the protocol-level request
@@ -169,6 +171,10 @@ type TaskBillingContext struct {
 	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
 	TieredSnapshot  *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+	// ChannelRatio freezes the submitting channel's optional promotion
+	// multiplier so polling settles at the price the task was submitted under.
+	// Nil means absent (1); 0 is a free channel.
+	ChannelRatio *float64 `json:"channel_ratio,omitempty"`
 }
 
 // ResultRetrievable reports whether retrieval surfaces (native query routes,
@@ -211,7 +217,7 @@ func (p *TaskPrivateData) Scan(val any) error {
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
-		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
+		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 && p.EnterpriseId == 0 && p.EnterpriseRequestId == "" &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
 		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
 		!p.ResultDiscarded {

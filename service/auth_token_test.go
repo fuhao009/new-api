@@ -182,3 +182,30 @@ func TestSecurityProofBindsAccessTokenSession(t *testing.T) {
 		assert.ErrorIs(t, err, ErrAuthTokenInvalid, sessionID)
 	}
 }
+
+func TestEnterpriseProofRejectsDifferentTenantTargetAndAction(t *testing.T) {
+	setupAuthSessionTestDB(t)
+	useTestSessionSecret(t)
+	identity := AuthIdentity{UserID: 42, SessionID: "enterprise-session", UserAuthVersion: 1, SessionVersion: 1}
+	binding, err := BindVerificationOperation(VerificationOperation{Scope: VerificationScopeEnterprise, Context: []byte(`{"enterprise_id":1,"action":"member.update","target_id":5}`)})
+	require.NoError(t, err)
+	proof, _, err := IssueSecurityProof(identity, "password", binding)
+	require.NoError(t, err)
+	for _, context := range []string{`{"enterprise_id":2,"action":"member.update","target_id":5}`, `{"enterprise_id":1,"action":"member.update","target_id":6}`, `{"enterprise_id":1,"action":"owner.transfer","target_id":5}`} {
+		other, err := BindVerificationOperation(VerificationOperation{Scope: VerificationScopeEnterprise, Context: []byte(context)})
+		require.NoError(t, err)
+		_, err = verifySecurityProof(proof, identity, other)
+		assert.ErrorIs(t, err, ErrProofContext)
+	}
+}
+
+func TestEnterpriseAndDeviceProofsRejectPersonalAccessTokens(t *testing.T) {
+	for _, scope := range []string{VerificationScopeEnterprise, VerificationScopeTrustedDevice} {
+		t.Run(scope, func(t *testing.T) {
+			identity := AuthIdentity{UserID: 42, SessionID: model.AccessTokenSessionID(7)}
+			require.ErrorIs(t, requireAccessTokenVerificationScope(identity, scope), ErrVerificationForbidden)
+			identity.SessionID = "browser-session"
+			require.NoError(t, requireAccessTokenVerificationScope(identity, scope))
+		})
+	}
+}

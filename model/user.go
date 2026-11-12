@@ -78,6 +78,7 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
 	Id                   int                        `json:"id"`
+	ManagedEnterpriseId  int                        `json:"managed_enterprise_id" gorm:"not null;default:0;index"`
 	Username             string                     `json:"username" gorm:"unique;index" validate:"max=20"`
 	Password             string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
 	HasPassword          bool                       `json:"-" gorm:"-:all"`
@@ -116,16 +117,17 @@ type User struct {
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		Role:        user.Role,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		AuthVersion: user.AuthVersion,
-		CacheSchema: userCacheSchemaVersion,
+		Id:                  user.Id,
+		ManagedEnterpriseId: user.ManagedEnterpriseId,
+		Group:               user.Group,
+		Quota:               user.Quota,
+		Status:              user.Status,
+		Role:                user.Role,
+		Username:            user.Username,
+		Setting:             user.Setting,
+		Email:               user.Email,
+		AuthVersion:         user.AuthVersion,
+		CacheSchema:         userCacheSchemaVersion,
 	}
 	return cache
 }
@@ -833,6 +835,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		}
 	}
 	if err = tx.Model(&current).Omit(
+		"managed_enterprise_id",
 		"access_token",
 		"quota",
 		"used_quota",

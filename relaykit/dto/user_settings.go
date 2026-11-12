@@ -25,4 +25,6 @@ var (
 	NotifyTypeWebhook = "webhook" // Webhook
 	NotifyTypeBark    = "bark"    // Bark 推送
 	NotifyTypeGotify  = "gotify"  // Gotify 推送
+	NotifyTypeDingTalk = "dingtalk" // DingTalk robot
+	NotifyTypeWeCom = "wecom" // WeCom robot
 )

@@ -90,6 +90,12 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	// subsequent ping and data writes through its shared write mutex.
 	if writer, ok := c.Writer.(*streamKeepAliveWriter); ok {
 		writer.stop()
+		c.Writer = writer.ResponseWriter
+	}
+	writer, ok := c.Writer.(*streamResponseWriter)
+	if !ok {
+		writer = &streamResponseWriter{ResponseWriter: c.Writer}
+		c.Writer = writer
 	}
 
 	// 无条件新建 StreamStatus
@@ -185,11 +191,16 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 						writeMutex.Lock()
 						defer writeMutex.Unlock()
 						ExtendWriteDeadline(c)
+						if writer.err != nil {
+							err = writer.err
+							return
+						}
 						err = PingData(c)
 					}()
 					if err != nil {
 						logger.LogError(c, common.LogText("ping data error: %s", err.Error()))
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
+						stop()
 						return
 					}
 					logger.LogDebug(c, "ping data sent")
@@ -222,12 +233,25 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		}()
 		sr := newStreamResult(info.StreamStatus)
 		for data := range dataChan {
+			select {
+			case <-c.Request.Context().Done():
+				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+				return
+			default:
+			}
 			sr.reset()
 			func() {
 				writeMutex.Lock()
 				defer writeMutex.Unlock()
 				ExtendWriteDeadline(c)
+				if writer.err != nil {
+					sr.Stop(writer.err)
+					return
+				}
 				dataHandler(data, sr)
+				if writer.err != nil {
+					sr.Stop(writer.err)
+				}
 			}()
 			if sr.IsStopped() {
 				return

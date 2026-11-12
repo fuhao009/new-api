@@ -38,6 +38,7 @@ import { AccountBindings } from './components/account-bindings'
 import { LoginSessionsCard } from './components/login-sessions-card'
 import { PasskeyCard } from './components/passkey-card'
 import { PrivacyCard } from './components/privacy-card'
+import { TrustedDevicesCard } from './components/trusted-devices-card'
 import { TwoFACard } from './components/two-fa-card'
 
 export function Security() {
@@ -105,6 +106,7 @@ export function Security() {
               {t('Sessions & Access')}
             </h3>
             <LoginSessionsCard />
+            <TrustedDevicesCard />
             <AccessTokensCard />
           </section>
           <section aria-labelledby='security-account' className='space-y-4'>

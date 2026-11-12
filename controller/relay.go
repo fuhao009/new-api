@@ -670,6 +670,8 @@ func executeTaskSubmissionWith(
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.BillingSource = relayInfo.BillingSource
+	task.PrivateData.EnterpriseId = relayInfo.EnterpriseId
+	task.PrivateData.EnterpriseRequestId = relayInfo.RequestId
 	task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
@@ -681,6 +683,7 @@ func executeTaskSubmissionWith(
 		OriginModelName: relayInfo.OriginModelName,
 		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		TieredSnapshot:  relayInfo.TieredBillingSnapshot,
+		ChannelRatio:    relayInfo.BillingChannelRatio(),
 	}
 	task.Quota = result.Quota
 	task.Data = result.TaskData

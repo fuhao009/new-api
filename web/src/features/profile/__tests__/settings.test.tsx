@@ -64,6 +64,31 @@ function sentBody(put: { mock: { calls: unknown[][] } }): unknown {
 }
 
 describe('user settings saves across profile and security', () => {
+  it.each(['dingtalk', 'wecom'] as const)('saves and reads back %s robot settings', async (notifyType) => {
+    const robotSettings = {
+      ...settings,
+      notify_type: notifyType,
+      webhook_url: notifyType === 'dingtalk'
+        ? 'https://oapi.dingtalk.com/robot/send?access_token=robot-token'
+        : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key',
+      webhook_secret: notifyType === 'dingtalk' ? 'signing-secret' : '',
+    }
+    const savedProfile = { ...profile, setting: JSON.stringify(robotSettings) }
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: savedProfile } })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+    const onUpdate = vi.fn()
+    render(<NotificationTab profile={savedProfile} onUpdate={onUpdate} quotaRemindEnabled quotaRemindThreshold={1000} />)
+    expect(screen.getByLabelText('Webhook URL')).toHaveValue(robotSettings.webhook_url)
+    if (notifyType === 'dingtalk') {
+      expect(screen.getByLabelText('Webhook Secret')).toHaveValue('signing-secret')
+    } else {
+      expect(screen.queryByLabelText('Webhook Secret')).not.toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+    await waitFor(() => expect(onUpdate).toHaveBeenCalled())
+    expect(put).toHaveBeenCalledWith('/api/user/setting', robotSettings)
+  })
+
   it('disabling IP recording sends the latest complete notification settings', async () => {
     const get = vi.spyOn(api, 'get').mockResolvedValue({
       data: {

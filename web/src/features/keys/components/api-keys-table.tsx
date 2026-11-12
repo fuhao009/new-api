@@ -44,7 +44,7 @@ import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import { getApiKeys, searchApiKeys } from '../api'
+import { filterApiKeys, getApiKeys, searchApiKeys } from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
@@ -219,6 +219,7 @@ export function ApiKeysTable() {
   const { t } = useTranslation()
   const { refreshTrigger } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
+  const [category, setCategory] = useState('')
   const columns = useApiKeysColumns(now)
 
   useEffect(() => {
@@ -268,20 +269,31 @@ export function ApiKeysTable() {
       pagination.pageSize,
       globalFilter,
       tokenFilter,
+      category,
       refreshTrigger,
     ],
     queryFn: async () => {
-      const result = shouldSearch
-        ? await searchApiKeys({
-            keyword: globalFilter,
-            token: tokenFilter,
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
-        : await getApiKeys({
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
+      let result
+      if (category.trim()) {
+        result = await filterApiKeys({
+          category: category.trim(),
+          keyword: globalFilter ?? '',
+          p: pagination.pageIndex + 1,
+          size: pagination.pageSize,
+        })
+      } else if (shouldSearch) {
+        result = await searchApiKeys({
+          keyword: globalFilter,
+          token: tokenFilter,
+          p: pagination.pageIndex + 1,
+          size: pagination.pageSize,
+        })
+      } else {
+        result = await getApiKeys({
+          p: pagination.pageIndex + 1,
+          size: pagination.pageSize,
+        })
+      }
 
       if (!result.success) {
         throw createServerError(
@@ -354,13 +366,29 @@ export function ApiKeysTable() {
         searchPlaceholder: t('Filter by name...'),
         searchDebounceMs: 500,
         additionalSearch: (
-          <Input
-            placeholder={t('Filter by API key...')}
-            aria-label={t('Filter by API key...')}
-            value={tokenFilterInput}
-            onChange={(e) => setTokenFilterInput(e.target.value)}
-            className='w-full sm:w-50 lg:w-60'
-          />
+          <div className='flex flex-wrap gap-2'>
+            <Input
+              placeholder={t('Filter by API key...')}
+              aria-label={t('Filter by API key...')}
+              value={tokenFilterInput}
+              onChange={(e) => setTokenFilterInput(e.target.value)}
+              disabled={!!category.trim()}
+              className='w-full sm:w-50 lg:w-60'
+            />
+            <Input
+              placeholder={t('Filter by category...')}
+              aria-label={t('Filter by category...')}
+              value={category}
+              onChange={(event) => {
+                setCategory(event.target.value)
+                onPaginationChange({
+                  pageIndex: 0,
+                  pageSize: pagination.pageSize,
+                })
+              }}
+              className='w-full sm:w-44'
+            />
+          </div>
         ),
         filters: [
           {

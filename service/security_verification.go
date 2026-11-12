@@ -46,6 +46,8 @@ const (
 	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
 	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
 	verificationScopeAdminUserPrefix       = "admin.user."
+	VerificationScopeEnterprise            = "enterprise.manage"
+	VerificationScopeTrustedDevice         = "trusted_device.enroll"
 )
 
 // adminUserManageActions are the ManageUser actions that change a user's
@@ -163,6 +165,16 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeEnterprise:
+		var context struct {
+			EnterpriseId int    `json:"enterprise_id"`
+			Action       string `json:"action"`
+			TargetId     int    `json:"target_id"`
+		}
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.EnterpriseId < 0 || context.TargetId < 0 || !slices.Contains([]string{"create", "update", "member.add", "member.update", "managed.create", "owner.transfer", "key.create", "key.update", "key.delete", "balance.adjust"}, context.Action) {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -259,7 +271,7 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
-	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
+	case VerificationScopeTrustedDevice, VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
 		if len(fields) != 0 {
@@ -324,7 +336,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
 		}
-	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+	case VerificationScopeTrustedDevice, VerificationScopeEnterprise, VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -392,7 +404,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
-			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+			case VerificationScopeTrustedDevice, VerificationScopeEnterprise, VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:

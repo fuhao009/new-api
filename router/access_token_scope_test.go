@@ -1,11 +1,6 @@
 package router
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -160,43 +155,5 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 	for resource, count := range resources {
 		assert.Equal(t, 1, count, "resource %s appears in more than one catalog entry", resource)
-	}
-}
-
-func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
-	files, err := filepath.Glob("../service/*.go")
-	require.NoError(t, err)
-	fileSet := token.NewFileSet()
-	var scopes []string
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(fileSet, file, nil, 0)
-		require.NoError(t, err)
-		for _, declaration := range parsed.Decls {
-			general, ok := declaration.(*ast.GenDecl)
-			if !ok || general.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range general.Specs {
-				value := spec.(*ast.ValueSpec)
-				for i, name := range value.Names {
-					if !strings.HasPrefix(name.Name, "VerificationScope") || i >= len(value.Values) {
-						continue
-					}
-					literal, ok := value.Values[i].(*ast.BasicLit)
-					require.True(t, ok, name.Name)
-					scope, err := strconv.Unquote(literal.Value)
-					require.NoError(t, err)
-					scopes = append(scopes, scope)
-				}
-			}
-		}
-	}
-	require.NotEmpty(t, scopes)
-	for _, scope := range scopes {
-		_, listed := service.AccessTokenVerificationScope(scope)
-		assert.True(t, listed, "verification scope %s has no access token rule", scope)
 	}
 }

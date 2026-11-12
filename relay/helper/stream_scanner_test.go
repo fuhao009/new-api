@@ -3,6 +3,7 @@ package helper
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -657,4 +659,178 @@ func TestNewStreamScannerCallerLimit(t *testing.T) {
 	require.True(t, scanner.Scan())
 	assert.Equal(t, "data: ok", scanner.Text())
 	require.NoError(t, scanner.Err())
+}
+
+type streamFaultWriter struct {
+	gin.ResponseWriter
+	mode    string
+	writes  int
+	flushes int
+}
+
+func (writer *streamFaultWriter) Write(data []byte) (int, error) {
+	return writer.WriteString(string(data))
+}
+
+func (writer *streamFaultWriter) WriteString(data string) (int, error) {
+	writer.writes++
+	switch writer.mode {
+	case "write error":
+		n, _ := writer.ResponseWriter.WriteString(data[:1])
+		return n, io.ErrClosedPipe
+	case "short write":
+		return writer.ResponseWriter.WriteString(data[:1])
+	default:
+		return writer.ResponseWriter.WriteString(data)
+	}
+}
+
+func (writer *streamFaultWriter) FlushError() error {
+	writer.flushes++
+	if writer.mode == "flush error" {
+		return io.ErrClosedPipe
+	}
+	writer.ResponseWriter.Flush()
+	return nil
+}
+
+func (writer *streamFaultWriter) Flush() {
+	_ = writer.FlushError()
+}
+
+func TestStreamScannerHandler_WriteFailureClosesUpstream(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	for _, mode := range []string{"write error", "short write", "flush error"} {
+		t.Run(mode, func(t *testing.T) {
+			reader, pipeWriter := io.Pipe()
+			t.Cleanup(func() {
+				_ = reader.Close()
+				_ = pipeWriter.Close()
+			})
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			writer := &streamFaultWriter{ResponseWriter: c.Writer, mode: mode}
+			c.Writer = writer
+			info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
+			done := make(chan struct{})
+			var handled int
+			var writeErr error
+			go func() {
+				StreamScannerHandler(c, &http.Response{Body: reader}, info, func(data string, _ *StreamResult) {
+					handled++
+					writeErr = StringData(c, data)
+					// Deliberately ignore the error: the scanner must still stop.
+				})
+				close(done)
+			}()
+			_, err := io.WriteString(pipeWriter, "data: first\n\n")
+			require.NoError(t, err)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("write failure did not close the blocked upstream")
+			}
+			wantErr := error(io.ErrClosedPipe)
+			if mode == "short write" {
+				wantErr = io.ErrShortWrite
+			}
+			assert.ErrorIs(t, writeErr, wantErr)
+			assert.Equal(t, 1, handled)
+			assert.True(t, info.StreamStatus.HasErrors())
+			assert.Equal(t, relaycommon.StreamEndReasonHandlerStop, info.StreamStatus.EndReason)
+			_, err = io.WriteString(pipeWriter, "data: second\n\n")
+			assert.ErrorIs(t, err, io.ErrClosedPipe)
+			before := recorder.Body.String()
+			writes, flushes := writer.writes, writer.flushes
+			Done(c)
+			assert.Equal(t, before, recorder.Body.String(), "a broken stream must not emit DONE")
+			assert.Equal(t, writes, writer.writes, "failed content must never be replayed")
+			assert.Equal(t, flushes, writer.flushes)
+		})
+	}
+}
+
+func TestStreamDataHelpersReturnWriteFailure(t *testing.T) {
+	for _, write := range []struct {
+		name string
+		send func(*gin.Context) error
+	}{
+		{name: "chat", send: func(c *gin.Context) error { return StringData(c, "first") }},
+		{name: "responses", send: func(c *gin.Context) error {
+			return ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, `{"delta":"A"}`)
+		}},
+		{name: "claude", send: func(c *gin.Context) error {
+			return ClaudeData(c, dto.ClaudeResponse{Type: "content_block_delta"})
+		}},
+	} {
+		t.Run(write.name, func(t *testing.T) {
+			for _, mode := range []string{"write error", "short write"} {
+				t.Run(mode, func(t *testing.T) {
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					c.Request = httptest.NewRequest(http.MethodPost, "/stream", nil)
+					writer := &streamFaultWriter{ResponseWriter: c.Writer, mode: mode}
+					c.Writer = writer
+					err := write.send(c)
+					wantErr := error(io.ErrClosedPipe)
+					if mode == "short write" {
+						wantErr = io.ErrShortWrite
+					}
+					require.ErrorIs(t, err, wantErr)
+					assert.True(t, c.IsAborted())
+					require.Len(t, c.Errors, 1)
+					assert.True(t, errors.Is(c.Errors[0].Err, wantErr))
+					assert.Equal(t, 1, writer.writes, "do not append another part after an event-header failure")
+					assert.Zero(t, writer.flushes)
+				})
+			}
+		})
+	}
+}
+
+type failingHTTPFlusher struct {
+	*httptest.ResponseRecorder
+}
+
+func (writer *failingHTTPFlusher) FlushError() error {
+	return io.ErrClosedPipe
+}
+
+func TestStreamScannerHandler_UnderlyingFlushFailureClosesUpstream(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	reader, pipeWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = pipeWriter.Close()
+	})
+	writer := &failingHTTPFlusher{ResponseRecorder: httptest.NewRecorder()}
+	c, _ := gin.CreateTestContext(writer)
+	c.Request = httptest.NewRequest(http.MethodPost, "/stream", nil)
+	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{}}
+	done := make(chan struct{})
+	var writeErr error
+	go func() {
+		StreamScannerHandler(c, &http.Response{Body: reader}, info, func(data string, _ *StreamResult) {
+			writeErr = StringData(c, data)
+		})
+		close(done)
+	}()
+	_, err := io.WriteString(pipeWriter, "data: first\n\n")
+	require.NoError(t, err)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("underlying HTTP flush failure was hidden by Gin")
+	}
+	assert.ErrorIs(t, writeErr, io.ErrClosedPipe)
+	assert.True(t, info.StreamStatus.HasErrors())
+	_, err = io.WriteString(pipeWriter, "data: second\n\n")
+	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	before := writer.Body.String()
+	Done(c)
+	assert.Equal(t, before, writer.Body.String())
 }

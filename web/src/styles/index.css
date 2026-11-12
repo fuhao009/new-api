@@ -745,3 +745,16 @@ For commercial licensing, please contact support@quantumnous.com
     display: none;
   }
 }
+
+@media print {
+  body:has(.usage-report) { overflow: visible !important; height: auto !important; }
+  body:has(.usage-report) * { visibility: hidden; }
+  body:has(.usage-report) *:has(.usage-report) { display: block !important; position: static !important; height: auto !important; max-height: none !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
+  body:has(.usage-report) *:has(.usage-report) > :not(:has(.usage-report)):not(.usage-report) { display: none !important; }
+  body:has(.usage-report) .usage-report,
+  body:has(.usage-report) .usage-report * { visibility: visible; }
+  body:has(.usage-report) .usage-report { position: static; width: 100%; background: white; color: black; }
+  body:has(.usage-report) .usage-report section,
+  body:has(.usage-report) .usage-report tr { break-inside: avoid; }
+  body:has(.usage-report) .usage-report button { display: none; }
+}

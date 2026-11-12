@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -135,6 +136,67 @@ func (writer *streamKeepAliveWriter) keepAlive(ctx context.Context, interval tim
 	}
 }
 
+// streamResponseWriter keeps a failed event from being replayed or followed by
+// a misleading terminal event. The scanner serializes all access to this writer.
+type streamResponseWriter struct {
+	gin.ResponseWriter
+	err error
+}
+
+func (writer *streamResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func (writer *streamResponseWriter) Write(data []byte) (int, error) {
+	if writer.err != nil {
+		return 0, writer.err
+	}
+	n, err := writer.ResponseWriter.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	writer.err = err
+	return n, err
+}
+
+func (writer *streamResponseWriter) WriteString(data string) (int, error) {
+	if writer.err != nil {
+		return 0, writer.err
+	}
+	n, err := writer.ResponseWriter.WriteString(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	writer.err = err
+	return n, err
+}
+
+func (writer *streamResponseWriter) Flush() {
+	_ = writer.FlushError()
+}
+
+func (writer *streamResponseWriter) FlushError() (err error) {
+	if writer.err != nil {
+		return writer.err
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("flush panic recovered: %v", recovered)
+		}
+		writer.err = err
+	}()
+	writer.ResponseWriter.WriteHeaderNow()
+	var responseWriter http.ResponseWriter = writer.ResponseWriter
+	// Gin's Flush discards the underlying FlushError. Its transparent Unwrap
+	// lets ResponseController retain HTTP/1 and HTTP/2 flush errors instead.
+	if _, ok := responseWriter.(interface{ FlushError() error }); !ok {
+		if unwrapper, ok := responseWriter.(interface{ Unwrap() http.ResponseWriter }); ok {
+			responseWriter = unwrapper.Unwrap()
+		}
+	}
+	return http.NewResponseController(responseWriter).Flush()
+}
+
 func FlushWriter(c *gin.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -150,13 +212,7 @@ func FlushWriter(c *gin.Context) (err error) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return errors.New("streaming error: flusher not found")
-	}
-
-	flusher.Flush()
-	return nil
+	return http.NewResponseController(c.Writer).Flush()
 }
 
 func requestContextDone(c *gin.Context) bool {
@@ -179,52 +235,61 @@ func SetEventStreamHeaders(c *gin.Context) {
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 }
 
-func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
+// renderStreamEvent preserves Gin's error recording while returning the error
+// to the stream owner; Context.Render itself has no error return value.
+func renderStreamEvent(c *gin.Context, data string) error {
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
 	if requestContextDone(c) {
-		return nil
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
-
-	jsonData, err := common.Marshal(resp)
-	if err != nil {
-		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
-	} else {
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+	if err := (common.CustomEvent{Data: data}).Render(c.Writer); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return err
 	}
-	_ = FlushWriter(c)
 	return nil
 }
 
+func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
+	jsonData, err := common.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	if err := renderStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
+		return err
+	}
+	if err := renderStreamEvent(c, "data: "+string(jsonData)); err != nil {
+		return err
+	}
+	return FlushWriter(c)
+}
+
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
-	if requestContextDone(c) {
+	if err := renderStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
 		return
 	}
-
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
+	if err := renderStreamEvent(c, fmt.Sprintf("data: %s\n", data)); err != nil {
+		return
+	}
 	_ = FlushWriter(c)
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
-	if requestContextDone(c) {
-		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+	if err := renderStreamEvent(c, fmt.Sprintf("event: %s\n", resp.Type)); err != nil {
+		return err
 	}
-
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
+	if err := renderStreamEvent(c, fmt.Sprintf("data: %s", data)); err != nil {
+		return err
+	}
 	return FlushWriter(c)
 }
 
 func StringData(c *gin.Context, str string) error {
-	if c == nil || c.Writer == nil {
-		return errors.New("context or writer is nil")
+	if err := renderStreamEvent(c, "data: "+str); err != nil {
+		return err
 	}
-
-	if requestContextDone(c) {
-		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
-	}
-
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
 	return FlushWriter(c)
 }
 
@@ -237,8 +302,10 @@ func PingData(c *gin.Context) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
+	if n, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
+	} else if n != len(": PING\n\n") {
+		return io.ErrShortWrite
 	}
 	return FlushWriter(c)
 }

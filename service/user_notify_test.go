@@ -1,6 +1,10 @@
 package service
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"net/url"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -188,4 +192,120 @@ func TestChannelNoticesFollowEachAdministratorsSwitch(t *testing.T) {
 			"channel_test 通道测试完成",
 		},
 	}, received)
+}
+
+type robotTestTransport struct {
+	target *url.URL
+	transport http.RoundTripper
+}
+
+func (transport robotTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	request.URL.Scheme, request.URL.Host = transport.target.Scheme, transport.target.Host
+	return transport.transport.RoundTrip(request)
+}
+
+func TestRobotNotificationsSendProviderPayloadAndSignedURL(t *testing.T) {
+	previousClient, previousWorker := httpClient, system_setting.WorkerUrl
+	fetch := system_setting.GetFetchSetting()
+	previousFetch := *fetch
+	t.Cleanup(func() {
+		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
+		*fetch = previousFetch
+	})
+	fetch.EnableSSRFProtection = false
+	system_setting.WorkerUrl = ""
+	for _, kind := range []string{dto.NotifyTypeDingTalk, dto.NotifyTypeWeCom} {
+		t.Run(kind, func(t *testing.T) {
+			var payload map[string]any
+			var query url.Values
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				assert.NoError(t, common.DecodeJson(r.Body, &payload))
+				query = r.URL.Query()
+				fmt.Fprint(w, `{"errcode":0,"errmsg":"ok"}`)
+			}))
+			defer server.Close()
+			target, err := url.Parse(server.URL)
+			require.NoError(t, err)
+			httpClient = &http.Client{Transport: robotTestTransport{target: target, transport: server.Client().Transport}}
+			endpoint := "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key"
+			if kind == dto.NotifyTypeDingTalk {
+				endpoint = "https://oapi.dingtalk.com/robot/send?access_token=robot-token"
+			}
+			require.NoError(t, sendRobotNotify(kind, endpoint, "signing-secret", dto.Notify{Title: "Alert", Content: "Remaining " + dto.ContentValueParam, Values: []any{42}}))
+			assert.Equal(t, map[string]any{"msgtype": "text", "text": map[string]any{"content": "Alert\nRemaining 42"}}, payload)
+			if kind == dto.NotifyTypeDingTalk {
+				assert.Equal(t, "robot-token", query.Get("access_token"))
+				require.NotEmpty(t, query.Get("timestamp"))
+				mac := hmac.New(sha256.New, []byte("signing-secret"))
+				mac.Write([]byte(query.Get("timestamp") + "\nsigning-secret"))
+				assert.Equal(t, base64.StdEncoding.EncodeToString(mac.Sum(nil)), query.Get("sign"))
+			} else {
+				assert.Equal(t, "robot-key", query.Get("key"))
+				assert.Empty(t, query.Get("sign"))
+			}
+		})
+	}
+}
+
+func TestRobotNotificationsRejectUnsafeURLsAndRedactErrors(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://oapi.dingtalk.com/robot/send?access_token=secret",
+		"https://127.0.0.1/robot/send?access_token=secret",
+		"https://oapi.dingtalk.com.evil.example/robot/send?access_token=secret",
+		"https://user:secret@oapi.dingtalk.com/robot/send?access_token=secret",
+		"https://oapi.dingtalk.com:443/robot/send?access_token=secret",
+		"https://oapi.dingtalk.com/robot/send?access_token=secret&access_token=other",
+		"https://oapi.dingtalk.com/robot/send",
+		"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=secret",
+	} {
+		err := sendRobotNotify(dto.NotifyTypeDingTalk, endpoint, "signing-secret", dto.Notify{})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "secret")
+		assert.NotContains(t, err.Error(), endpoint)
+	}
+}
+
+func TestRobotNotificationsRejectProviderFailuresWithoutLeakingSecrets(t *testing.T) {
+	previousClient, previousWorker := httpClient, system_setting.WorkerUrl
+	fetch := system_setting.GetFetchSetting()
+	previousFetch := *fetch
+	t.Cleanup(func() {
+		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
+		*fetch = previousFetch
+	})
+	fetch.EnableSSRFProtection = false
+	system_setting.WorkerUrl = ""
+	for _, tc := range []struct {
+		name string
+		status int
+		body string
+		want string
+	}{
+		{"provider rejection", 200, `{"errcode":310000,"errmsg":"secret robot-token"}`, "rejected with code: 310000"},
+		{"invalid response", 200, `{"errmsg":"secret robot-token"}`, "invalid robot notification response"},
+		{"HTTP rejection", 403, "secret robot-token", "status code: 403"},
+		{"redirect rejected", 302, "secret robot-token", "status code: 302"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Location", "https://evil.example/secret")
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			target, err := url.Parse(server.URL)
+			require.NoError(t, err)
+			httpClient = &http.Client{Transport: robotTestTransport{target: target, transport: server.Client().Transport}}
+			err = sendRobotNotify(dto.NotifyTypeDingTalk, "https://oapi.dingtalk.com/robot/send?access_token=robot-token", "secret", dto.Notify{})
+			require.ErrorContains(t, err, tc.want)
+			assert.NotContains(t, err.Error(), "secret")
+			assert.NotContains(t, err.Error(), "robot-token")
+			assert.Equal(t, 1, requests)
+		})
+	}
 }

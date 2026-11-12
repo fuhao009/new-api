@@ -77,6 +77,18 @@ func authHelper(c *gin.Context, minRole int) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_USER_INVALID", common.NewMessage("Unauthorized, invalid user info"))
 		return
 	}
+	managedEnterprise := user.ManagedEnterpriseId
+	if managedEnterprise > 0 {
+		if err := model.ValidateEnterpriseAccess(managedEnterprise, user.Id); err != nil {
+			abortWithWebMessage(c, http.StatusForbidden, "ENTERPRISE_ACCESS_DENIED", common.NewMessage("Enterprise access denied"))
+			return
+		}
+		path := c.Request.URL.Path
+		if strings.HasPrefix(path, "/pg") || strings.HasPrefix(path, "/api/token") || strings.HasPrefix(path, "/api/user/topup") || strings.HasPrefix(path, "/api/user/pay") || strings.HasPrefix(path, "/api/user/stripe") || strings.HasPrefix(path, "/api/user/creem") || strings.HasPrefix(path, "/api/user/waffo") || strings.HasPrefix(path, "/api/user/aff") || (path == "/api/user/self" && c.Request.Method == http.MethodDelete) {
+			abortWithWebMessage(c, http.StatusForbidden, "ENTERPRISE_MANAGED_ACCOUNT", common.NewMessage("Managed accounts must use enterprise API keys"))
+			return
+		}
+	}
 	setDashboardAuthContext(c, user, identity, useAccessToken)
 	if lookup != nil {
 		setAccessTokenContext(c, lookup)
@@ -616,6 +628,10 @@ func TokenAuth() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return
 		}
+		if token.EnterpriseId == 0 && userCache.ManagedEnterpriseId > 0 {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "Managed accounts must use enterprise API keys")
+			return
+		}
 
 		userCache.WriteContext(c)
 
@@ -674,6 +690,13 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	if token == nil {
 		return fmt.Errorf("token is nil")
 	}
+	if token.EnterpriseId > 0 {
+		if err := model.ValidateEnterpriseAccess(token.EnterpriseId, token.UserId); err != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, err.Error())
+			return err
+		}
+	}
+	c.Set("enterprise_id", token.EnterpriseId)
 	c.Set("id", token.UserId)
 	c.Set("token_id", token.Id)
 	c.Set("token_key", token.Key)
@@ -701,7 +724,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 		}
 	}
 	if len(parts) > 1 {
-		if model.IsAdmin(token.UserId) {
+		if token.EnterpriseId == 0 && model.IsAdmin(token.UserId) {
 			id, err := strconv.Atoi(parts[1])
 			if err != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))

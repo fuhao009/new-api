@@ -290,10 +290,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest, common.UpstreamAddresses(c)...)
 		}
 		groupRatioInfo := helper.HandleGroupRatio(c, info)
-		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		channelRatio := info.BillingChannelRatio()
+		channelMultiplier := 1.0
+		if channelRatio != nil {
+			channelMultiplier = *channelRatio
+		}
+		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio * channelMultiplier)
 		noteTaskQuotaClamp(info, clamp)
-		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
-		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
+		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo, ChannelRatio: channelRatio}
+		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, ChannelRatio: channelRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
 	} else {
 		priceData, err = helper.ModelPriceHelperPerCall(c, info)
 		if err != nil {
@@ -330,12 +335,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		noteTaskQuotaClamp(info, clamp)
 	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
+	// Reserve before submission; retries must cover a higher selected-channel price.
 	if info.Billing == nil && !info.PriceData.FreeModel {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
+	} else if info.Billing != nil && info.PriceData.Quota > info.Billing.GetPreConsumedQuota() {
+		if err := info.Billing.Reserve(info.PriceData.Quota); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "insufficient_quota", http.StatusForbidden)
+		}
+		info.FinalPreConsumedQuota = info.Billing.GetPreConsumedQuota()
 	}
 
 	// 8. 构建请求体

@@ -32,6 +32,7 @@ import {
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
 import { type ApiKey } from '../types'
+import { ApiKeysBatchEdit } from './api-keys-batch-edit'
 import { ApiKeysMultiDeleteDialog } from './api-keys-multi-delete-dialog'
 import { useApiKeys } from './api-keys-provider'
 
@@ -83,6 +84,7 @@ export function DataTableBulkActions<TData>({
   return (
     <>
       <BulkActionsToolbar table={table} entityName='API key'>
+        <ApiKeysBatchEdit table={table} />
         <Tooltip>
           <TooltipTrigger
             render={

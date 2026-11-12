@@ -41,6 +41,23 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	"GET /api/enterprises":                               accessTokenSessionRule,
+	"POST /api/enterprises":                              accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise":                   accessTokenSessionRule,
+	"PATCH /api/enterprises/:enterprise":                 accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise/members":           accessTokenSessionRule,
+	"POST /api/enterprises/:enterprise/members":          accessTokenSessionRule,
+	"PATCH /api/enterprises/:enterprise/members/:target": accessTokenSessionRule,
+	"POST /api/enterprises/:enterprise/managed-accounts": accessTokenSessionRule,
+	"POST /api/enterprises/:enterprise/owner-transfer":   accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise/balance":           accessTokenSessionRule,
+	"POST /api/enterprises/:enterprise/balance":          accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise/ledger":            accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise/audit":             accessTokenSessionRule,
+	"GET /api/enterprises/:enterprise/keys":              accessTokenSessionRule,
+	"POST /api/enterprises/:enterprise/keys":             accessTokenSessionRule,
+	"PATCH /api/enterprises/:enterprise/keys/:target":    accessTokenSessionRule,
+	"DELETE /api/enterprises/:enterprise/keys/:target":   accessTokenSessionRule,
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),
@@ -60,6 +77,9 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 
 	// router/api-router.go: /api/user (self)
 	"GET /api/user/sessions":                       accessTokenSessionRule,
+	"GET /api/user/trusted-devices":                accessTokenSessionRule,
+	"POST /api/user/trusted-devices":               accessTokenSessionRule,
+	"DELETE /api/user/trusted-devices/:id":         accessTokenSessionRule,
 	"DELETE /api/user/sessions/:sid":               accessTokenSessionRule,
 	"POST /api/user/sessions/revoke-others":        accessTokenSessionRule,
 	"GET /api/user/self/groups":                    accessTokenScopeRule("profile:read"),
@@ -211,16 +231,18 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/authz/catalog": accessTokenScopeRule("user:read"),
 
 	// router/api-router.go: /api/token
-	"GET /api/token/":            accessTokenScopeRule("api_key:read"),
-	"GET /api/token/search":      accessTokenScopeRule("api_key:read"),
-	"GET /api/token/auto-groups": accessTokenScopeRule("api_key:read"),
-	"GET /api/token/:id":         accessTokenScopeRule("api_key:read"),
-	"POST /api/token/:id/key":    accessTokenScopeRule("api_key:reveal"),
-	"POST /api/token/":           accessTokenScopeRule("api_key:write"),
-	"PUT /api/token/":            accessTokenScopeRule("api_key:write"),
-	"DELETE /api/token/:id":      accessTokenScopeRule("api_key:write"),
-	"POST /api/token/batch":      accessTokenScopeRule("api_key:write"),
-	"POST /api/token/batch/keys": accessTokenScopeRule("api_key:reveal"),
+	"GET /api/token/":              accessTokenScopeRule("api_key:read"),
+	"GET /api/token/search":        accessTokenScopeRule("api_key:read"),
+	"GET /api/token/auto-groups":   accessTokenScopeRule("api_key:read"),
+	"GET /api/token/:id":           accessTokenScopeRule("api_key:read"),
+	"POST /api/token/:id/key":      accessTokenScopeRule("api_key:reveal"),
+	"POST /api/token/":             accessTokenScopeRule("api_key:write"),
+	"PUT /api/token/":              accessTokenScopeRule("api_key:write"),
+	"DELETE /api/token/:id":        accessTokenScopeRule("api_key:write"),
+	"POST /api/token/batch":        accessTokenScopeRule("api_key:write"),
+	"POST /api/token/batch/keys":   accessTokenScopeRule("api_key:reveal"),
+	"GET /api/token/filter":        accessTokenScopeRule("api_key:read"),
+	"POST /api/token/batch/update": accessTokenScopeRule("api_key:write"),
 
 	// router/api-router.go: /api/redemption
 	"GET /api/redemption/":           accessTokenScopeRule("redemption:read"),

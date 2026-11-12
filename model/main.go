@@ -340,6 +340,8 @@ func migrateDB() error {
 	}
 
 	err := DB.AutoMigrate(
+		&TrustedDevice{}, &PasswordLoginGuard{},
+		&Enterprise{}, &EnterpriseMember{}, &EnterpriseAudit{}, &EnterpriseCharge{}, &EnterpriseBalanceEntry{},
 		&Channel{},
 		&Token{},
 		&User{},

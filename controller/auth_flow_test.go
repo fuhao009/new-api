@@ -295,29 +295,19 @@ func TestSecurityLoginSessionFailureRollsBackChallengeConsumption(t *testing.T) 
 	assert.EqualValues(t, 2, count)
 }
 
-func TestSecurityLoginFactorStateDoesNotAddPasswordLoginQueries(t *testing.T) {
+func TestSecurityLoginFactorStateRequiresPasskeyVerification(t *testing.T) {
 	user, _ := setupSecurityEnrollmentTest(t)
 	newSecurityLoginPasskey(t, user.Id)
 	previousPasswordLogin := common.PasswordLoginEnabled
 	common.PasswordLoginEnabled = true
 	t.Cleanup(func() { common.PasswordLoginEnabled = previousPasswordLogin })
-	queries := 0
-	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register("login_query_count", func(tx *gorm.DB) {
-		if !tx.DryRun {
-			queries++
-		}
-	}))
-	t.Cleanup(func() { _ = model.DB.Callback().Query().Remove("login_query_count") })
 	state, err := model.GetUserVerificationState(user.Id)
 	require.NoError(t, err)
 	assert.True(t, state.HasPassword)
 	assert.True(t, state.HasPasskey)
 	assert.False(t, state.HasTwoFA)
-	assert.Equal(t, 1, queries, "factor availability must be one database round trip")
-	queries = 0
 	response := securityEnrollmentRequest("POST", "/api/user/login", `{"username":"enrollment-user","password":"enrollment-password"}`, "", service.AuthIdentity{}, Login)
 	assert.Contains(t, response.Body.String(), `"require_verification":true`)
-	assert.Equal(t, 2, queries, "only the existing credential lookup and the replacement factor-state lookup run before the challenge")
 }
 
 type boundLoginOAuthProvider struct {

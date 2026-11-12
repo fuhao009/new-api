@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -83,7 +84,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 				response.Choices[j].Delta.Reasoning = nil
 			}
 			info.ThinkingContentInfo.SendLastThinkingContent = true
-			helper.ObjectData(c, response)
+			if err := helper.ObjectData(c, response); err != nil {
+				return err
+			}
 		}
 
 		// Convert reasoning content to regular content if any
@@ -119,11 +122,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var usage = &dto.Usage{}
 	var lastStreamData string
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
+	// An attempted write must not be replayed after partial delivery.
+	var lastStreamDataForwarded bool
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if lastStreamData != "" {
+		if lastStreamData != "" && !lastStreamDataForwarded {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
 				sr.Error(err)
@@ -135,10 +140,20 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 
 			lastStreamData = data
-			observeStreamChoices(info, data, seenStreamToolCalls, &streamFunctionCallNames)
+			lastStreamDataForwarded = false
+			hasChoices := observeStreamChoices(info, data, seenStreamToolCalls, &streamFunctionCallNames)
 			if err := processTokenData(info, data, &responseTextBuilder, &toolCount); err != nil {
 				logger.LogError(c, common.LogText("error processing stream token data: %s", err.Error()))
 				sr.Error(err)
+			}
+			// Choice frames are immediately deliverable; metadata-only frames retain
+			// the existing look-behind and final usage filtering.
+			if hasChoices && info.RelayFormat == types.RelayFormatOpenAI && info.RelayMode == relayconstant.RelayModeChatCompletions {
+				lastStreamDataForwarded = true
+				if err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+					common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
+					sr.Error(err)
+				}
 			}
 		}
 	})
@@ -176,7 +191,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
+		if shouldSendLastResp && !lastStreamDataForwarded {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
 	}
@@ -198,11 +213,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 }
 
 // observeStreamChoices collects billable function call names and records the
-// finish reason facts used by health sampling from one parsed chunk.
-func observeStreamChoices(info *relaycommon.RelayInfo, data string, seen map[string]struct{}, names *[]string) {
+// finish reason facts used by health sampling from one parsed chunk. It
+// reports whether the chunk carried any choice entry, reusing the single
+// decode already required for that bookkeeping.
+func observeStreamChoices(info *relaycommon.RelayInfo, data string, seen map[string]struct{}, names *[]string) bool {
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
-		return
+		return false
 	}
 	for _, choice := range streamResponse.Choices {
 		if choice.FinishReason != nil && *choice.FinishReason != "" {
@@ -247,6 +264,7 @@ func observeStreamChoices(info *relaycommon.RelayInfo, data string, seen map[str
 			*names = append(*names, name)
 		}
 	}
+	return len(streamResponse.Choices) > 0
 }
 
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {

@@ -80,7 +80,7 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		if actualQuota != 0 {
 			if relayInfo.BillingSource == BillingSourceSubscription {
 				checkAndSendSubscriptionQuotaNotify(relayInfo)
-			} else {
+			} else if relayInfo.EnterpriseId == 0 {
 				checkAndSendQuotaNotify(relayInfo, actualQuota-preConsumed, preConsumed)
 			}
 		}

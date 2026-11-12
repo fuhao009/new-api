@@ -1749,6 +1749,113 @@ func TestSettle_TieredSnapshotWriteBackUsesSettledFactsAndMatchedTier(t *testing
 	assert.NotContains(t, other, "seconds")
 }
 
+func TestSettle_TaskChannelRatioFrozenAtSubmission(t *testing.T) {
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+	})
+
+	truncate(t)
+	ctx := context.Background()
+
+	const userID = 39
+	const initialQuota, preConsumed = 10_000, 80
+	seedUser(t, userID, initialQuota)
+
+	ratio := 0.8
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ChannelRatio = &ratio
+
+	settled := settleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 100})
+
+	// 100 tokens * model ratio 1 * group 1 * frozen 0.8 = 80, matching the
+	// submission reservation, so no delta log is written.
+	require.True(t, settled)
+	assert.Equal(t, 80, task.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
+	assert.Equal(t, int64(0), countLogs(t))
+
+	// A free submission channel stays free even if the completion reports usage.
+	zero := 0.0
+	freeTask := makeTask(userID, 0, 0, 0, BillingSourceWallet, 0)
+	freeTask.PrivateData.BillingContext.ChannelRatio = &zero
+	require.True(t, settleTaskBillingOnComplete(ctx, &mockAdaptor{}, freeTask, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 100}))
+	assert.Zero(t, freeTask.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
+}
+
+func TestTaskBillingOtherPublishesChannelRatioOnlyWhenDiscounted(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ratio      *float64
+		wantAbsent bool
+		want       float64
+	}{
+		{name: "absent", wantAbsent: true},
+		{name: "one omitted", ratio: common.GetPointer(1.0), wantAbsent: true},
+		{name: "discounted", ratio: common.GetPointer(0.8), want: 0.8},
+		{name: "free", ratio: common.GetPointer(0.0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := makeTask(1, 1, 10, 0, BillingSourceWallet, 0)
+			task.PrivateData.BillingContext.ChannelRatio = tc.ratio
+
+			var decoded map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(taskBillingOther(task).JSONString(), &decoded))
+			if tc.wantAbsent {
+				assert.NotContains(t, decoded, "channel_ratio")
+				return
+			}
+			assert.Equal(t, tc.want, decoded["channel_ratio"])
+		})
+	}
+}
+
+func TestSettle_TieredTaskAppliesChannelRatioOnce(t *testing.T) {
+	truncate(t)
+	const userID = 40
+	const initialQuota, preConsumed = 10_000, 40
+	seedUser(t, userID, initialQuota)
+
+	expression := `tier("base", u("seconds") * 10)`
+	ratio := 0.8
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ChannelRatio = &ratio
+	task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{
+		ExprString:       expression,
+		ExprHash:         billingexpr.ExprHashString(expression),
+		GroupRatio:       1,
+		ChannelRatio:     &ratio,
+		QuotaPerUnit:     1,
+		ExprVersion:      1,
+		TaskUsageBilling: true,
+		UsageFacts:       map[string]any{"seconds": float64(5)},
+		EstimatedTier:    "base",
+	}
+
+	settled := settleTaskBillingOnComplete(
+		context.Background(),
+		&mockAdaptor{},
+		task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess, UsageFacts: map[string]any{"seconds": float64(5)}},
+	)
+
+	// 5 seconds * $10 = 50 quota, discounted once to 40.
+	require.True(t, settled)
+	assert.Equal(t, 40, task.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
+
+	log := getLastLog(t)
+	if log != nil {
+		var other map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+		if value, ok := other["channel_ratio"]; ok {
+			assert.Equal(t, 0.8, value)
+		}
+	}
+}
+
 func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 	previousRatios := ratio_setting.ModelRatio2JSONString()
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
